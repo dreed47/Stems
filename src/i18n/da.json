@@ -6,7 +6,6 @@
   "Select a stem": "Vælg et spor",
   "Mute or solo the selected stem": "Slå det valgte spor fra eller solo det",
   "Selected stem louder or quieter": "Valgte spor højere eller lavere",
-  "Reset the mix": "Nulstil mixet",
   "Back or forward 5 seconds": "5 sekunder tilbage eller frem",
   "Back or forward 30 seconds": "30 sekunder tilbage eller frem",
   "Back to the start": "Tilbage til starten",
@@ -89,5 +88,15 @@
   "Demucs stopped without writing any stems.": "Demucs stoppede uden at skrive nogen spor.",
   "Demucs failed: %1": "Demucs fejlede: %1",
   "Could not move the stems into %1.": "Kunne ikke flytte sporene til %1.",
-  "Done": "Færdig"
+  "Done": "Færdig",
+  "Restored this song's mix": "Gendannede sangens mix",
+  "Pitch": "Toneleje",
+  "Lower the pitch 10 cents ([, or { for 1 cent)": "Sænk tonelejet 10 cent ([, eller { for 1 cent)",
+  "Raise the pitch 10 cents (], or } for 1 cent)": "Hæv tonelejet 10 cent (], eller } for 1 cent)",
+  "100 cents is a half step. Double-click or press \\ to reset.": "100 cent er et halvtonetrin. Dobbeltklik eller tryk \\ for at nulstille.",
+  "Pitch down or up 10 cents": "Toneleje ned eller op 10 cent",
+  "Pitch down or up 1 cent": "Toneleje ned eller op 1 cent",
+  "Reset the pitch": "Nulstil tonelejet",
+  "Reset the mix and the pitch": "Nulstil mixet og tonelejet",
+  "Could not save this song's mix to %1: %2": "Kunne ikke gemme sangens mix i %1: %2"
 }

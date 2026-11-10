@@ -29,6 +29,7 @@ class Mixer : public QAbstractListModel {
     Q_PROPERTY(bool canUndo READ canUndo NOTIFY historyChanged)
     Q_PROPERTY(bool canRedo READ canRedo NOTIFY historyChanged)
     Q_PROPERTY(bool anySolo READ anySolo NOTIFY mixChanged)
+    Q_PROPERTY(int cents READ cents NOTIFY mixChanged)
 
 public:
     enum Roles { NameRole = Qt::UserRole + 1, MutedRole, SoloedRole, VolumeRole, AudibleRole, PeaksRole };
@@ -56,6 +57,7 @@ public:
     bool canUndo() const { return !m_undo.empty(); }
     bool canRedo() const { return !m_redo.empty(); }
     bool anySolo() const;
+    int cents() const { return m_cents; }
 
     // Decodes every stem file with ffmpeg; emits loadFailed or loadedChanged.
     void load(const QStringList &files, const QString &folder, const QString &title);
@@ -71,9 +73,21 @@ public:
     Q_INVOKABLE void toggleSolo(int row);
     Q_INVOKABLE void setVolume(int row, double volume);
     Q_INVOKABLE void nudgeVolume(int row, double delta);
+    // Pitch in cents, up to a half step either way; the tempo stays put.
+    Q_INVOKABLE void setCents(int cents);
+    Q_INVOKABLE void nudgeCents(int delta) { setCents(m_cents + delta); }
     Q_INVOKABLE void resetMix();
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();
+
+    // Each song's mix (pitch, and every stem's mute, solo and volume) lives
+    // in mix.json in its stems folder. With autosave on, every change is
+    // written there shortly after it's made.
+    QString settingsPath() const;
+    // Applies the saved mix, if there is one; true when it found one.
+    bool restoreSettings();
+    QString saveSettings() const;
+    void setAutosave(bool on) { m_autosave = on; }
 
     // The names of the stems, in order, for the CLI.
     QStringList names() const;
@@ -96,6 +110,7 @@ signals:
     void historyChanged();
     void mixChanged();
     void audioFailed(const QString &message);
+    void saveFailed(const QString &message);
 
 private:
     struct Track {
@@ -111,7 +126,11 @@ private:
         double volume;
         bool operator==(const TrackState &o) const { return muted == o.muted && soloed == o.soloed && volume == o.volume; }
     };
-    using MixState = std::vector<TrackState>;
+    struct MixState {
+        std::vector<TrackState> tracks;
+        int cents = 0;
+        bool operator==(const MixState &o) const { return tracks == o.tracks && cents == o.cents; }
+    };
 
     class Stream;
     friend class Stream;
@@ -119,7 +138,10 @@ private:
     MixState state() const;
     void apply(const MixState &state);
     void remember();
-    void mixEdited();
+    // Pushes the mix to the audio thread and tells QML; edited() also saves.
+    void mixUpdated();
+    void edited();
+    void flushSave();
     void finishLoad();
     void updatePosition();
     bool ensureSink();
@@ -135,6 +157,9 @@ private:
     bool m_playing = false;
     double m_position = 0;
     int m_selected = 0;
+    int m_cents = 0;
+    bool m_autosave = false;
+    QTimer m_saveTimer;
     std::vector<MixState> m_undo, m_redo;
 
     // Shared with the audio thread.
@@ -142,6 +167,9 @@ private:
     std::vector<float> m_targetGains;
     std::atomic<qint64> m_frame{0};
     std::atomic<bool> m_ended{false};
+    std::atomic<int> m_liveCents{0};
+    std::atomic<bool> m_restartShift{false};
+    std::atomic<qint64> m_shiftLag{0};
 
     std::unique_ptr<Stream> m_stream;
     QAudioSink *m_sink = nullptr;

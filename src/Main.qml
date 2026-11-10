@@ -43,6 +43,13 @@ ApplicationWindow {
             + Number(s).toLocaleString(Qt.locale(), "f", 0)
     }
 
+    // Cents as the language writes numbers, signed: "+20 ¢", "−5 ¢", "0 ¢".
+    function centsLabel(cents) {
+        translator.language
+        const number = Math.abs(cents).toLocaleString(Qt.locale(), "f", 0)
+        return (cents > 0 ? "+" : cents < 0 ? "−" : "") + number + " ¢"
+    }
+
     function quit() {
         if (backend.busy)
             quitDialog.open()
@@ -75,6 +82,11 @@ ApplicationWindow {
     Shortcut { sequences: ["+", "="]; context: Qt.ApplicationShortcut; onActivated: mixer.nudgeVolume(mixer.selected, 0.1) }
     Shortcut { sequence: "-"; context: Qt.ApplicationShortcut; onActivated: mixer.nudgeVolume(mixer.selected, -0.1) }
     Shortcut { sequence: "0"; context: Qt.ApplicationShortcut; onActivated: mixer.resetMix() }
+    Shortcut { sequence: "]"; context: Qt.ApplicationShortcut; onActivated: mixer.nudgeCents(10) }
+    Shortcut { sequence: "["; context: Qt.ApplicationShortcut; onActivated: mixer.nudgeCents(-10) }
+    Shortcut { sequence: "}"; context: Qt.ApplicationShortcut; onActivated: mixer.nudgeCents(1) }
+    Shortcut { sequence: "{"; context: Qt.ApplicationShortcut; onActivated: mixer.nudgeCents(-1) }
+    Shortcut { sequence: "\\"; context: Qt.ApplicationShortcut; onActivated: mixer.setCents(0) }
     Shortcut { sequence: "Left"; context: Qt.ApplicationShortcut; onActivated: mixer.skip(-5) }
     Shortcut { sequence: "Right"; context: Qt.ApplicationShortcut; onActivated: mixer.skip(5) }
     Shortcut { sequence: "Shift+Left"; context: Qt.ApplicationShortcut; onActivated: mixer.skip(-30) }
@@ -394,6 +406,46 @@ ApplicationWindow {
                         text: qsTr("Solo")
                         font.weight: Font.DemiBold
                         color: theme.accent
+                    }
+
+                    ToolSeparator {}
+
+                    // Pitch, in cents, up to a half step either way.
+                    Label {
+                        text: qsTr("Pitch")
+                        color: win.dim
+                    }
+                    ChipButton {
+                        text: "−"
+                        enabled: mixer.cents > -100
+                        autoRepeat: true
+                        onClicked: mixer.nudgeCents(-10)
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 600
+                        ToolTip.text: qsTr("Lower the pitch 10 cents ([, or { for 1 cent)")
+                    }
+                    Label {
+                        Layout.preferredWidth: 64
+                        horizontalAlignment: Text.AlignHCenter
+                        text: win.centsLabel(mixer.cents)
+                        color: mixer.cents !== 0 ? theme.accent : "#e6e6ea"
+                        font.features: { "tnum": 1 }
+                        font.pixelSize: 15
+                        font.weight: mixer.cents !== 0 ? Font.DemiBold : Font.Normal
+                        TapHandler { onDoubleTapped: mixer.setCents(0) }
+                        HoverHandler { id: centsHover }
+                        ToolTip.visible: centsHover.hovered
+                        ToolTip.delay: 600
+                        ToolTip.text: qsTr("100 cents is a half step. Double-click or press \\ to reset.")
+                    }
+                    ChipButton {
+                        text: "+"
+                        enabled: mixer.cents < 100
+                        autoRepeat: true
+                        onClicked: mixer.nudgeCents(10)
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 600
+                        ToolTip.text: qsTr("Raise the pitch 10 cents (], or } for 1 cent)")
                     }
                 }
             }

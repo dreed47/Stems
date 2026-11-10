@@ -1,6 +1,6 @@
 # Stems
 
-![Stems playing a song split into vocals, drums, bass and other, with the vocals muted](docs/screenshot.png)
+![Stems playing a song split into vocals, drums, bass and other, with the vocals muted and the pitch raised 23 cents](docs/screenshot.png)
 
 Stems splits a song into its instruments and plays them back together, so you
 can solo the bass line, mute the vocals for karaoke, or hear what the drummer
@@ -9,8 +9,15 @@ is doing. Open an MP3 (or FLAC, WAV, OGG, M4A…), and
 bass and everything else. Choose **6 stems** to also get guitar and piano.
 
 Every stem plays from one audio stream, so they stay sample-locked, and mute,
-solo and volume take effect immediately. What you hear can be exported as a
-WAV file.
+solo and volume take effect immediately. The pitch moves up or down by as much
+as a half step (100 cents) without changing the tempo, using
+[Rubber Band](https://breakfastquay.com/rubberband/), to match a detuned
+recording or an instrument you're playing along on. What you hear, pitch
+included, can be exported as a WAV file.
+
+Each song remembers its mix. The pitch and every stem's mute, solo and volume
+are saved to `mix.json` in the song's stems folder as you change them, and
+come back the next time you open the song.
 
 Stems are saved in `~/Music/Stems/<song>/`, one WAV per instrument, so each
 song is split only once. Opening the song again, or any stem in that folder,
@@ -49,7 +56,10 @@ splitting takes roughly as long as the song.
 | `↑` `↓` / `K` `J` | Select a stem |
 | `M` / `S` | Mute or solo the selected stem |
 | `+` / `-` | Selected stem louder or quieter |
-| `0` | Reset the mix |
+| `[` / `]` | Pitch down or up 10 cents |
+| `{` / `}` | Pitch down or up 1 cent |
+| `\` | Reset the pitch (or double-click it) |
+| `0` | Reset the mix and the pitch |
 | `←` `→` | Back or forward 5 seconds |
 | `Shift+←` `→` | Back or forward 30 seconds |
 | `Home` | Back to the start |
@@ -73,6 +83,8 @@ stems check                                   # Is Demucs installed?
 stems split song.mp3 [--six]                  # Split into ~/Music/Stems/song/
 stems mix ~/Music/Stems/song --mute vocals -o karaoke.wav
 stems mix ~/Music/Stems/song --solo drums,bass -o rhythm.wav
+stems mix ~/Music/Stems/song --saved -o as-i-left-it.wav    # The mix saved in the app
+stems mix ~/Music/Stems/song --cents -100 -o down-a-half-step.wav
 stems skill install                           # Teach coding agents to use stems
 stems open song.mp3                           # The app, with that song
 ```

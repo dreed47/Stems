@@ -1,10 +1,10 @@
 pkgname=stems
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc='Split a song into its instruments and play them back with solo and mute'
 arch=('x86_64' 'aarch64')
 license=('MIT')
-depends=('qt6-base' 'qt6-declarative' 'qt6-multimedia' 'qt6-wayland' 'xdg-desktop-portal' 'ffmpeg')
+depends=('qt6-base' 'qt6-declarative' 'qt6-multimedia' 'qt6-wayland' 'xdg-desktop-portal' 'ffmpeg' 'rubberband')
 optdepends=('uv: to install Demucs, the separation engine, from inside the app')
 makedepends=('gcc' 'make')
 source=()

@@ -30,6 +30,14 @@ Backend::Backend(FilePicker *picker, Separator *separator, QObject *parent)
     });
 
     connect(&m_mixer, &Mixer::loadFailed, this, &Backend::setError);
+    connect(&m_mixer, &Mixer::saveFailed, this, &Backend::setError);
+
+    // Each song comes back the way it was left: pitch, mutes, solos, volumes.
+    m_mixer.setAutosave(true);
+    connect(&m_mixer, &Mixer::loadedChanged, this, [this] {
+        if (m_mixer.loaded() && m_mixer.restoreSettings())
+            setNotice(tr("Restored this song's mix"));
+    });
     connect(&m_mixer, &Mixer::audioFailed, this, &Backend::setError);
 
     m_installer.setProcessChannelMode(QProcess::MergedChannels);
@@ -202,6 +210,8 @@ void Backend::exportMix() {
     QString name = QStringLiteral("%1 - %2.wav").arg(m_mixer.title(), audible.join('+'));
     if (audible.size() == names.size())
         name = QStringLiteral("%1 - mix.wav").arg(m_mixer.title());
+    if (m_mixer.cents() != 0)
+        name.replace(".wav", QStringLiteral(" %1%2c.wav").arg(m_mixer.cents() > 0 ? "+" : "").arg(m_mixer.cents()));
     m_picker->saveMix(QUrl::fromLocalFile(QDir(m_mixer.folder()).filePath(name)));
 }
 

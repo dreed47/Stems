@@ -21,8 +21,10 @@ const char *Usage = R"(Usage:
   stems [open] [FILE]                 Open the app, optionally with a song or stems folder
   stems check [--json]                Report whether Demucs and ffmpeg are installed
   stems split FILE [--six] [--json]   Split a song into stems under ~/Music/Stems
-  stems mix FOLDER -o OUT.wav [--mute a,b] [--solo a,b] [--json]
-                                      Render a mix of a stems folder to a WAV file
+  stems mix FOLDER -o OUT.wav [--saved] [--mute a,b] [--solo a,b] [--cents N] [--json]
+                                      Render a mix of a stems folder to a WAV file;
+                                      --saved starts from the mix saved in the app,
+                                      --cents shifts the pitch (-100 to 100)
   stems skill install                 Install the agent skill to ~/.claude/skills/stems
 )";
 
@@ -30,6 +32,9 @@ struct Options {
     QStringList positional;
     bool json = false;
     bool six = false;
+    bool saved = false;
+    int cents = 0;
+    bool hasCents = false;
     QString output;
     QStringList mute, solo;
     QString error;
@@ -48,6 +53,14 @@ Options parse(const QStringList &arguments) {
         };
         if (a == "--json") options.json = true;
         else if (a == "--six" || a == "--6") options.six = true;
+        else if (a == "--saved") options.saved = true;
+        else if (a == "--cents") {
+            bool ok = false;
+            options.cents = value().toInt(&ok);
+            options.hasCents = true;
+            if (!ok || options.cents < -100 || options.cents > 100)
+                options.error = QStringLiteral("--cents takes a whole number from -100 to 100");
+        }
         else if (a == "-o" || a == "--output") options.output = value();
         else if (a == "--mute") options.mute = value().split(',', Qt::SkipEmptyParts);
         else if (a == "--solo") options.solo = value().split(',', Qt::SkipEmptyParts);
@@ -158,13 +171,20 @@ int mix(const Options &options) {
     if (!error.isEmpty())
         return fail(options, error);
 
+    if (options.saved && !mixer.restoreSettings())
+        return fail(options, QStringLiteral("%1 has no saved mix").arg(folder));
+    if (options.hasCents)
+        mixer.setCents(options.cents);
+
     const QStringList names = mixer.names();
     for (const auto &name : options.mute + options.solo)
         if (!names.contains(name))
             return fail(options, QStringLiteral("no stem called %1 (there are: %2)").arg(name, names.join(", ")));
+    // Flags set a stem's state outright, on top of a saved mix if asked for.
     for (int i = 0; i < names.size(); ++i) {
-        if (options.mute.contains(names[i])) mixer.toggleMute(i);
-        if (options.solo.contains(names[i])) mixer.toggleSolo(i);
+        const QModelIndex row = mixer.index(i);
+        if (options.mute.contains(names[i]) && !mixer.data(row, Mixer::MutedRole).toBool()) mixer.toggleMute(i);
+        if (options.solo.contains(names[i]) && !mixer.data(row, Mixer::SoloedRole).toBool()) mixer.toggleSolo(i);
     }
     QString output = options.output;
     if (!output.endsWith(".wav", Qt::CaseInsensitive))

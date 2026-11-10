@@ -1,12 +1,15 @@
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QProcess>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest>
+#include <cmath>
 
 #include "backend.h"
 #include "mixer.h"
+#include "pitchshifter.h"
 #include "separator.h"
 #include "theme.h"
 #include "translator.h"
@@ -273,12 +276,152 @@ mkdir -p "$out/$model" && for s in vocals drums bass other; do echo $s > "$out/$
         QVERIFY(!backend.splitting());
     }
 
+    void pitchShifterMovesPitchNotTempo()
+    {
+        // Two seconds of 440 Hz, shifted up a half step, should come out
+        // two seconds long at about 466 Hz.
+        const qint64 frames = 2 * Mixer::SampleRate;
+        std::vector<qint16> tone(size_t(frames * 2));
+        for (qint64 i = 0; i < frames; ++i)
+            tone[size_t(2 * i)] = tone[size_t(2 * i + 1)] = qint16(12000 * std::sin(2 * M_PI * 440 * i / Mixer::SampleRate));
+        qint64 cursor = 0;
+        auto source = [&](qint16 *into, qint64 wanted) {
+            const qint64 count = qBound<qint64>(0, frames - cursor, wanted);
+            std::copy_n(tone.begin() + cursor * 2, count * 2, into);
+            cursor += count;
+            return count;
+        };
+        PitchShifter shifter(Mixer::SampleRate, 2);
+        shifter.restart(100);
+        std::vector<qint16> out(size_t(frames * 2));
+        QElapsedTimer timer;
+        timer.start();
+        qint64 made = 0;
+        while (made < frames) {
+            const qint64 n = shifter.render(out.data() + made * 2, qMin<qint64>(4096, frames - made), source);
+            if (n == 0)
+                break;
+            made += n;
+        }
+        // Real-time playback needs this far faster than real time.
+        QVERIFY2(timer.elapsed() < 1000, qPrintable(QString("2 s took %1 ms").arg(timer.elapsed())));
+        QCOMPARE(made, frames);
+        QCOMPARE(frequency(out, Mixer::SampleRate / 2, Mixer::SampleRate), 466.16);
+    }
+
+    void mixerShiftsPitchWithUndo()
+    {
+        QTemporaryDir dir;
+        Mixer mixer;
+        QVERIFY(loadTones(dir, mixer));
+        mixer.nudgeCents(10);
+        mixer.nudgeCents(10);
+        QCOMPARE(mixer.cents(), 20);
+        mixer.setCents(500);
+        QCOMPARE(mixer.cents(), 100);
+        mixer.setCents(-500);
+        QCOMPARE(mixer.cents(), -100);
+        mixer.undo();
+        QCOMPARE(mixer.cents(), 100);
+        mixer.resetMix();
+        QCOMPARE(mixer.cents(), 0);
+    }
+
+    void mixerExportsShiftedPitch()
+    {
+        QTemporaryDir dir;
+        Mixer mixer;
+        QVERIFY(loadTones(dir, mixer));
+        mixer.toggleSolo(0);  // the 440 Hz tone
+        mixer.setCents(-100);
+        QCOMPARE(mixer.exportMix(dir.filePath("down.wav")), QString());
+        QFile file(dir.filePath("down.wav"));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray wav = file.readAll();
+        QCOMPARE(wav.size(), 44 + Mixer::SampleRate * 4);
+        std::vector<qint16> samples(size_t((wav.size() - 44) / 2));
+        memcpy(samples.data(), wav.constData() + 44, samples.size() * 2);
+        QCOMPARE(frequency(samples, Mixer::SampleRate / 4, Mixer::SampleRate / 2), 415.30);
+    }
+
+    void mixerSavesAndRestoresEachSong()
+    {
+        QTemporaryDir dir;
+        {
+            Mixer mixer;
+            mixer.setAutosave(true);
+            QVERIFY(loadTones(dir, mixer));
+            QVERIFY(!mixer.restoreSettings());
+            mixer.toggleMute(0);
+            mixer.toggleSolo(2);
+            mixer.setVolume(1, 0.4);
+            mixer.setCents(-30);
+            QTRY_VERIFY(QFileInfo::exists(dir.filePath("song/mix.json")));
+            mixer.setCents(-35);
+            // Leaving the song writes what's pending straight away.
+        }
+        Mixer mixer;
+        QVERIFY(loadTones(dir, mixer, true));
+        QCOMPARE(mixer.cents(), 0);
+        QVERIFY(mixer.restoreSettings());
+        QCOMPARE(mixer.cents(), -35);
+        QCOMPARE(mixer.data(mixer.index(0), Mixer::MutedRole).toBool(), true);
+        QCOMPARE(mixer.data(mixer.index(2), Mixer::SoloedRole).toBool(), true);
+        QCOMPARE(mixer.data(mixer.index(1), Mixer::VolumeRole).toDouble(), 0.4);
+        // Restoring is where the song starts, not a step to undo.
+        QVERIFY(!mixer.canUndo());
+
+        // Without autosave (the CLI), nothing is written.
+        mixer.setCents(50);
+        QTest::qWait(600);
+        QFile saved(dir.filePath("song/mix.json"));
+        QVERIFY(saved.open(QIODevice::ReadOnly));
+        QVERIFY(saved.readAll().contains("-35"));
+    }
+
+    void backendRestoresTheMixOnOpen()
+    {
+        QTemporaryDir dir;
+        QVERIFY(makeTones(dir));
+        write(dir.filePath("song/mix.json"), R"({"version":1,"cents":12,"stems":{"drums":{"muted":true}}})");
+        FakePicker picker;
+        Separator separator(dir.filePath("Stems"), "/nonexistent-demucs");
+        Backend backend(&picker, &separator);
+        backend.openPath(dir.filePath("song"));
+        QTRY_VERIFY_WITH_TIMEOUT(backend.mixer()->loaded(), 10000);
+        QCOMPARE(backend.mixer()->cents(), 12);
+        QCOMPARE(backend.mixer()->targetGains(), std::vector<float>({1, 0, 1}));
+        QVERIFY(!backend.notice().isEmpty());
+    }
+
 private:
     class FakePicker : public FilePicker {
     public:
         void openAudio(const QString &) override {}
         void saveMix(const QUrl &) override {}
     };
+
+    // The tone's frequency from its zero crossings over [from, to) frames of
+    // the left channel, rounded to hundredths of a hertz within 0.5 %.
+    static double frequency(const std::vector<qint16> &stereo, qint64 from, qint64 to)
+    {
+        double first = -1, last = -1;
+        int crossings = 0;
+        for (qint64 i = from + 1; i < to; ++i) {
+            const qint16 a = stereo[size_t(2 * (i - 1))], b = stereo[size_t(2 * i)];
+            if (a < 0 && b >= 0) {
+                const double at = i - 1 + double(-a) / (b - a);
+                if (first < 0) first = at; else ++crossings;
+                last = at;
+            }
+        }
+        const double hz = crossings * double(Mixer::SampleRate) / (last - first);
+        // Snap to the expected values so QCOMPARE can name them exactly.
+        for (const double expected : {466.16, 415.30, 440.0})
+            if (std::abs(hz - expected) / expected < 0.005)
+                return expected;
+        return hz;
+    }
 
     static void write(const QString &path, const QByteArray &contents)
     {

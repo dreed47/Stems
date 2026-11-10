@@ -2,6 +2,10 @@
 
 #include <QAudioFormat>
 #include <QAudioSink>
+#include <QDir>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QFileInfo>
 #include <QMediaDevices>
 #include <QProcess>
@@ -11,18 +15,23 @@
 #include <algorithm>
 #include <cmath>
 
+#include "pitchshifter.h"
+
 namespace {
 constexpr int BytesPerFrame = Mixer::Channels * int(sizeof(qint16));
 // Mute, solo and volume changes fade over this many frames (about 12 ms).
 constexpr int RampFrames = 512;
 constexpr int UndoLimit = 200;
+const QString SettingsFile = QStringLiteral("mix.json");
 }
 
 // The audio sink pulls the mix from here, possibly on its own thread, so it
 // only touches the immutable PCM, the atomics, and the gains under their lock.
+// With the pitch moved off zero the mix runs through a PitchShifter first;
+// at zero it's bypassed, so plain playback stays bit-exact.
 class Mixer::Stream : public QIODevice {
 public:
-    explicit Stream(Mixer *mixer) : m_mixer(mixer) {}
+    explicit Stream(Mixer *mixer) : m_mixer(mixer), m_shifter(SampleRate, Channels) {}
     bool isSequential() const override { return true; }
     qint64 bytesAvailable() const override { return std::numeric_limits<int>::max(); }
 
@@ -47,15 +56,48 @@ protected:
             m_gains = targets;
 
         auto *out = reinterpret_cast<qint16 *>(data);
+        const int cents = m_mixer->m_liveCents.load();
+        const bool restart = m_mixer->m_restartShift.exchange(false);
         qint64 from = m_mixer->m_frame.load();
-        const qint64 count = qBound<qint64>(0, m_mixer->m_frames - from, frames);
-        m_mixer->mixInto(out, from, count, m_gains, targets);
-        std::fill(out + count * Channels, out + frames * Channels, qint16(0));
+
+        // Leaving the shifter: what it still held was never heard, so
+        // playback picks up from there rather than skipping it.
+        if (cents == 0 && m_shifting) {
+            m_shifting = false;
+            const qint64 back = qMax<qint64>(0, from - m_shifter.lag());
+            if (!restart && m_mixer->m_frame.compare_exchange_strong(from, back))
+                from = back;
+            m_mixer->m_shiftLag = 0;
+        }
+
+        qint64 cursor = from;
+        std::vector<float> rampFrom = m_gains;
+        auto source = [&](qint16 *buffer, qint64 wanted) {
+            const qint64 count = qBound<qint64>(0, m_mixer->m_frames - cursor, wanted);
+            m_mixer->mixInto(buffer, cursor, count, rampFrom, targets);
+            rampFrom = targets;
+            cursor += count;
+            return count;
+        };
+
+        qint64 written;
+        if (cents != 0) {
+            if (!m_shifting || restart)
+                m_shifter.restart(cents);
+            else
+                m_shifter.setCents(cents);
+            m_shifting = true;
+            written = m_shifter.render(out, frames, source);
+            m_mixer->m_shiftLag = m_shifter.lag();
+        } else {
+            written = source(out, frames);
+        }
+        std::fill(out + written * Channels, out + frames * Channels, qint16(0));
         m_gains = targets;
 
         // A seek from the UI thread in the meantime wins over our advance.
-        m_mixer->m_frame.compare_exchange_strong(from, from + count);
-        if (count < frames)
+        m_mixer->m_frame.compare_exchange_strong(from, cursor);
+        if (written < frames)
             m_mixer->m_ended = true;
         return frames * BytesPerFrame;
     }
@@ -63,14 +105,24 @@ protected:
 private:
     Mixer *m_mixer;
     std::vector<float> m_gains;
+    PitchShifter m_shifter;
+    bool m_shifting = false;
 };
 
 Mixer::Mixer(QObject *parent) : QAbstractListModel(parent) {
     m_ticker.setInterval(33);
     connect(&m_ticker, &QTimer::timeout, this, &Mixer::updatePosition);
+    m_saveTimer.setSingleShot(true);
+    m_saveTimer.setInterval(400);
+    connect(&m_saveTimer, &QTimer::timeout, this, [this] {
+        const QString problem = saveSettings();
+        if (!problem.isEmpty())
+            emit saveFailed(problem);
+    });
 }
 
 Mixer::~Mixer() {
+    flushSave();
     for (auto *decoder : m_decoders) {
         decoder->disconnect(this);
         decoder->kill();
@@ -238,6 +290,8 @@ void Mixer::finishLoad() {
     m_loading = false;
     m_undo.clear();
     m_redo.clear();
+    m_cents = 0;
+    m_liveCents = 0;
     {
         QMutexLocker lock(&m_gainLock);
         m_targetGains = targetGains();
@@ -253,6 +307,7 @@ void Mixer::finishLoad() {
 }
 
 void Mixer::clear() {
+    flushSave();
     pause();
     for (auto *decoder : m_decoders) {
         decoder->disconnect(this);
@@ -272,6 +327,8 @@ void Mixer::clear() {
     m_frames = 0;
     m_frame = 0;
     m_position = 0;
+    m_cents = 0;
+    m_liveCents = 0;
     m_folder.clear();
     m_title.clear();
     m_undo.clear();
@@ -327,6 +384,7 @@ void Mixer::play() {
     if (!ensureSink())
         return;
     m_stream->resetGains();
+    m_restartShift = true;
     if (m_sink->state() == QAudio::SuspendedState)
         m_sink->resume();
     else
@@ -356,6 +414,8 @@ void Mixer::seek(double seconds) {
         return;
     m_frame = qBound<qint64>(0, qint64(seconds * SampleRate), m_frames);
     m_ended = false;
+    m_restartShift = true;
+    m_shiftLag = 0;
     // Drop what's already queued, so the jump is heard right away.
     if (m_sink && m_playing) {
         m_sink->reset();
@@ -379,8 +439,10 @@ void Mixer::updatePosition() {
     }
     qint64 frame = m_frame.load();
     // What's buffered in the sink hasn't been heard yet.
+    // What's buffered in the sink, or still inside the pitch shifter,
+    // hasn't been heard yet.
     if (m_sink && m_playing)
-        frame -= qMax<qint64>(0, m_sink->bufferSize() - m_sink->bytesFree()) / BytesPerFrame;
+        frame -= qMax<qint64>(0, m_sink->bufferSize() - m_sink->bytesFree()) / BytesPerFrame + m_shiftLag.load();
     const double position = double(qBound<qint64>(0, frame, m_frames)) / SampleRate;
     if (position != m_position) {
         m_position = position;
@@ -391,17 +453,19 @@ void Mixer::updatePosition() {
 Mixer::MixState Mixer::state() const {
     MixState state;
     for (const auto &track : m_tracks)
-        state.push_back({track.muted, track.soloed, track.volume});
+        state.tracks.push_back({track.muted, track.soloed, track.volume});
+    state.cents = m_cents;
     return state;
 }
 
 void Mixer::apply(const MixState &state) {
-    for (size_t i = 0; i < m_tracks.size() && i < state.size(); ++i) {
-        m_tracks[i].muted = state[i].muted;
-        m_tracks[i].soloed = state[i].soloed;
-        m_tracks[i].volume = state[i].volume;
+    for (size_t i = 0; i < m_tracks.size() && i < state.tracks.size(); ++i) {
+        m_tracks[i].muted = state.tracks[i].muted;
+        m_tracks[i].soloed = state.tracks[i].soloed;
+        m_tracks[i].volume = state.tracks[i].volume;
     }
-    mixEdited();
+    m_cents = state.cents;
+    edited();
 }
 
 void Mixer::remember() {
@@ -412,14 +476,30 @@ void Mixer::remember() {
     emit historyChanged();
 }
 
-void Mixer::mixEdited() {
+void Mixer::mixUpdated() {
     {
         QMutexLocker lock(&m_gainLock);
         m_targetGains = targetGains();
     }
+    m_liveCents = m_cents;
     if (!m_tracks.empty())
         emit dataChanged(index(0), index(int(m_tracks.size()) - 1), {MutedRole, SoloedRole, VolumeRole, AudibleRole});
     emit mixChanged();
+}
+
+void Mixer::edited() {
+    mixUpdated();
+    if (m_autosave && !m_folder.isEmpty())
+        m_saveTimer.start();
+}
+
+void Mixer::flushSave() {
+    if (!m_saveTimer.isActive())
+        return;
+    m_saveTimer.stop();
+    const QString problem = saveSettings();
+    if (!problem.isEmpty())
+        emit saveFailed(problem);
 }
 
 void Mixer::toggleMute(int row) {
@@ -427,7 +507,7 @@ void Mixer::toggleMute(int row) {
         return;
     remember();
     m_tracks[size_t(row)].muted = !m_tracks[size_t(row)].muted;
-    mixEdited();
+    edited();
 }
 
 void Mixer::toggleSolo(int row) {
@@ -435,7 +515,7 @@ void Mixer::toggleSolo(int row) {
         return;
     remember();
     m_tracks[size_t(row)].soloed = !m_tracks[size_t(row)].soloed;
-    mixEdited();
+    edited();
 }
 
 void Mixer::setVolume(int row, double volume) {
@@ -446,7 +526,7 @@ void Mixer::setVolume(int row, double volume) {
         return;
     remember();
     m_tracks[size_t(row)].volume = volume;
-    mixEdited();
+    edited();
 }
 
 void Mixer::nudgeVolume(int row, double delta) {
@@ -454,8 +534,17 @@ void Mixer::nudgeVolume(int row, double delta) {
         setVolume(row, m_tracks[size_t(row)].volume + delta);
 }
 
+void Mixer::setCents(int cents) {
+    cents = qBound(-PitchShifter::MaxCents, cents, PitchShifter::MaxCents);
+    if (m_tracks.empty() || cents == m_cents)
+        return;
+    remember();
+    m_cents = cents;
+    edited();
+}
+
 void Mixer::resetMix() {
-    MixState fresh(m_tracks.size(), TrackState{false, false, 1.0});
+    MixState fresh{std::vector<TrackState>(m_tracks.size(), TrackState{false, false, 1.0}), 0};
     if (fresh == state())
         return;
     remember();
@@ -480,6 +569,44 @@ void Mixer::redo() {
     m_redo.pop_back();
     apply(next);
     emit historyChanged();
+}
+
+QString Mixer::settingsPath() const {
+    return m_folder.isEmpty() ? QString() : QDir(m_folder).filePath(SettingsFile);
+}
+
+// Stems are matched by name, so a saved mix still fits if the folder gains
+// or loses a stem.
+bool Mixer::restoreSettings() {
+    QFile file(settingsPath());
+    if (m_tracks.empty() || !file.open(QIODevice::ReadOnly))
+        return false;
+    const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+    if (root.isEmpty())
+        return false;
+    m_cents = qBound(-PitchShifter::MaxCents, root.value("cents").toInt(0), PitchShifter::MaxCents);
+    const QJsonObject stems = root.value("stems").toObject();
+    for (auto &track : m_tracks) {
+        const QJsonObject saved = stems.value(track.name).toObject();
+        track.muted = saved.value("muted").toBool(false);
+        track.soloed = saved.value("soloed").toBool(false);
+        track.volume = qBound(0.0, saved.value("volume").toDouble(1.0), 1.0);
+    }
+    mixUpdated();
+    return true;
+}
+
+QString Mixer::saveSettings() const {
+    if (m_folder.isEmpty())
+        return {};
+    QJsonObject stems;
+    for (const auto &track : m_tracks)
+        stems.insert(track.name, QJsonObject{{"muted", track.muted}, {"soloed", track.soloed}, {"volume", track.volume}});
+    const QJsonObject root{{"version", 1}, {"cents", m_cents}, {"stems", stems}};
+    QSaveFile file(settingsPath());
+    if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(root).toJson()) < 0 || !file.commit())
+        return tr("Could not save this song's mix to %1: %2").arg(settingsPath(), file.errorString());
+    return {};
 }
 
 QString Mixer::exportMix(const QString &path) const {
@@ -514,9 +641,24 @@ QString Mixer::exportMix(const QString &path) const {
 
     constexpr qint64 chunk = 65536;
     std::vector<qint16> buffer(size_t(chunk * Channels));
+    // The export is shifted the same way as playback, and comes out the
+    // same length as the song.
+    std::unique_ptr<PitchShifter> shifter;
+    if (m_cents != 0) {
+        shifter = std::make_unique<PitchShifter>(SampleRate, Channels);
+        shifter->restart(m_cents);
+    }
+    qint64 cursor = 0;
+    auto source = [&](qint16 *into, qint64 wanted) {
+        const qint64 count = qBound<qint64>(0, m_frames - cursor, wanted);
+        mixInto(into, cursor, count, gains, gains);
+        cursor += count;
+        return count;
+    };
     for (qint64 from = 0; from < m_frames; from += chunk) {
         const qint64 count = qMin(chunk, m_frames - from);
-        mixInto(buffer.data(), from, count, gains, gains);
+        const qint64 made = shifter ? shifter->render(buffer.data(), count, source) : source(buffer.data(), count);
+        std::fill(buffer.begin() + made * Channels, buffer.begin() + count * Channels, qint16(0));
         // WAV is little-endian, like every machine Omarchy runs on.
         file.write(reinterpret_cast<const char *>(buffer.data()), count * BytesPerFrame);
     }

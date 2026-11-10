@@ -6,7 +6,6 @@
   "Select a stem": "Seleccionar una pista",
   "Mute or solo the selected stem": "Silenciar o poner en solo la pista seleccionada",
   "Selected stem louder or quieter": "Pista seleccionada más fuerte o más baja",
-  "Reset the mix": "Restablecer la mezcla",
   "Back or forward 5 seconds": "Atrás o adelante 5 segundos",
   "Back or forward 30 seconds": "Atrás o adelante 30 segundos",
   "Back to the start": "Volver al inicio",
@@ -89,5 +88,15 @@
   "Demucs stopped without writing any stems.": "Demucs terminó sin escribir ninguna pista.",
   "Demucs failed: %1": "Demucs falló: %1",
   "Could not move the stems into %1.": "No se pudieron mover las pistas a %1.",
-  "Done": "Listo"
+  "Done": "Listo",
+  "Restored this song's mix": "Se restauró la mezcla de esta canción",
+  "Pitch": "Tono",
+  "Lower the pitch 10 cents ([, or { for 1 cent)": "Bajar el tono 10 cents ([, o { para 1 cent)",
+  "Raise the pitch 10 cents (], or } for 1 cent)": "Subir el tono 10 cents (], o } para 1 cent)",
+  "100 cents is a half step. Double-click or press \\ to reset.": "100 cents son un semitono. Doble clic o \\ para restablecer.",
+  "Pitch down or up 10 cents": "Tono abajo o arriba 10 cents",
+  "Pitch down or up 1 cent": "Tono abajo o arriba 1 cent",
+  "Reset the pitch": "Restablecer el tono",
+  "Reset the mix and the pitch": "Restablecer la mezcla y el tono",
+  "Could not save this song's mix to %1: %2": "No se pudo guardar la mezcla de esta canción en %1: %2"
 }

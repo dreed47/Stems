@@ -1,6 +1,7 @@
 QT += core gui qml quick quickcontrols2 dbus multimedia
 
-CONFIG += c++17 release
+CONFIG += c++17 release link_pkgconfig
+PKGCONFIG += rubberband
 TARGET = stems
 TEMPLATE = app
 
@@ -9,6 +10,7 @@ HEADERS += \
     src/cli.h \
     src/filepicker.h \
     src/mixer.h \
+    src/pitchshifter.h \
     src/portalfilepicker.h \
     src/separator.h \
     src/theme.h \
@@ -19,6 +21,7 @@ SOURCES += \
     src/backend.cpp \
     src/cli.cpp \
     src/mixer.cpp \
+    src/pitchshifter.cpp \
     src/portalfilepicker.cpp \
     src/separator.cpp \
     src/theme.cpp \

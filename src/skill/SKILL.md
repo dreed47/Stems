@@ -17,6 +17,8 @@ stems split song.mp3 --json             # -> {"ok":true,"folder":...,"stems":[{"
 stems split song.mp3 --six --json       # 6 stems, into "<song> (6 stems)"
 stems mix "<folder>" --mute vocals -o karaoke.wav --json
 stems mix "<folder>" --solo drums,bass -o rhythm.wav --json
+stems mix "<folder>" --cents -100 -o lower.wav --json  # pitch, -100..100 cents, tempo unchanged
+stems mix "<folder>" --saved -o mine.wav --json        # start from the mix saved in the app (mix.json)
 stems open song.mp3                     # the GUI, to listen and solo/mute by hand
 ```
 
@@ -25,3 +27,5 @@ stems open song.mp3                     # the GUI, to listen and solo/mute by ha
 - If `check` fails because Demucs is missing, the error shows the `uv`
   command that installs it; ask before running it (about 1 GB download).
 - `--solo` wins over `--mute`, like on a mixing desk.
+- The app saves each song's mix to `<folder>/mix.json`; the CLI only reads it,
+  with `--saved`, and never writes it.
