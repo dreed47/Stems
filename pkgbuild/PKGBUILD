@@ -1,0 +1,24 @@
+pkgname=stems
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Split a song into its instruments and play them back with solo and mute'
+arch=('x86_64' 'aarch64')
+license=('MIT')
+depends=('qt6-base' 'qt6-declarative' 'qt6-multimedia' 'qt6-wayland' 'xdg-desktop-portal' 'ffmpeg')
+optdepends=('uv: to install Demucs, the separation engine, from inside the app')
+makedepends=('gcc' 'make')
+source=()
+sha256sums=()
+
+build() {
+  cd "$startdir/.."
+  ./bin/build
+}
+
+package() {
+  cd "$startdir/.."
+  install -Dm755 build/stems "$pkgdir/usr/bin/stems"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$startdir/stems.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/stems.svg"
+  install -Dm644 "$startdir/stems.desktop" "$pkgdir/usr/share/applications/stems.desktop"
+}

@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Name=Stems
+Comment=Split a song into its instruments and solo or mute each one
+Comment[da]=Opdel en sang i dens instrumenter, og solo eller slå hvert spor fra
+Comment[de]=Einen Song in seine Instrumente aufteilen und jede Spur solo oder stumm schalten
+Comment[es_MX]=Separa una canción en sus instrumentos y pon cada pista en solo o en silencio
+Comment[fr]=Séparer un morceau en instruments et mettre chaque piste en solo ou la couper
+Comment[pt_BR]=Separe uma música em instrumentos e coloque cada faixa em solo ou silêncio
+Comment[pt]=Separe uma música em instrumentos e coloque cada faixa em solo ou silêncio
+Exec=stems open %f
+Icon=stems
+Terminal=false
+Categories=AudioVideo;Audio;Music;
+MimeType=audio/mpeg;audio/flac;audio/x-wav;audio/wav;audio/ogg;audio/mp4;audio/aac;audio/x-m4a;
+Keywords=stem;separation;karaoke;vocals;demucs;
+StartupWMClass=stems

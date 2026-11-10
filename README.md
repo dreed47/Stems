@@ -1,0 +1,95 @@
+# Stems
+
+![Stems playing a song split into vocals, drums, bass and other, with the vocals muted](docs/screenshot.png)
+
+Stems splits a song into its instruments and plays them back together, so you
+can solo the bass line, mute the vocals for karaoke, or hear what the drummer
+is doing. Open an MP3 (or FLAC, WAV, OGG, M4A…), and
+[Demucs](https://github.com/adefossez/demucs) separates it into vocals, drums,
+bass and everything else. Choose **6 stems** to also get guitar and piano.
+
+Every stem plays from one audio stream, so they stay sample-locked, and mute,
+solo and volume take effect immediately. What you hear can be exported as a
+WAV file.
+
+Stems are saved in `~/Music/Stems/<song>/`, one WAV per instrument, so each
+song is split only once. Opening the song again, or any stem in that folder,
+goes straight to the mixer. Your original file is never changed.
+
+## Install
+
+```sh
+bin/install
+```
+
+This builds the package and installs it with `makepkg -fsi`. Stems then shows
+up in the Omarchy app launcher (`Super + Space`).
+
+Splitting needs Demucs. If it's missing, Stems says so and offers to install
+it (press **I**), which runs:
+
+```sh
+uv tool install demucs --python 3.12 --with 'torch==2.8.*' --with 'torchaudio==2.8.*' \
+  --with numpy --with soundfile \
+  --index https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match
+```
+
+That is a CPU-only PyTorch, about 1 GB, installed in your home folder. The
+first split also downloads the model, about 80 MB. On a laptop-class CPU,
+splitting takes roughly as long as the song.
+
+## Keys
+
+| Key | Action |
+| --- | --- |
+| `Space` | Play or pause (open a song when none is loaded) |
+| `O` | Open a song or a stems folder (or drop one on the window) |
+| `1`–`6` | Mute a stem |
+| `Ctrl+1`–`6` | Solo a stem |
+| `↑` `↓` / `K` `J` | Select a stem |
+| `M` / `S` | Mute or solo the selected stem |
+| `+` / `-` | Selected stem louder or quieter |
+| `0` | Reset the mix |
+| `←` `→` | Back or forward 5 seconds |
+| `Shift+←` `→` | Back or forward 30 seconds |
+| `Home` | Back to the start |
+| `E` | Export what's audible as a WAV |
+| `T` | Switch between 4 and 6 stems for the next split |
+| `F` | Show the stems folder |
+| `I` | Install Demucs |
+| `Ctrl+Z` / `Ctrl+Shift+Z` | Undo or redo a mix change |
+| `Esc` | Cancel the split |
+| `?` | Show every shortcut |
+| `Q` | Quit |
+
+Click or drag on a waveform to seek.
+
+## Command line
+
+Every command works without a display, takes `--json`, and exits 0 or 1:
+
+```sh
+stems check                                   # Is Demucs installed?
+stems split song.mp3 [--six]                  # Split into ~/Music/Stems/song/
+stems mix ~/Music/Stems/song --mute vocals -o karaoke.wav
+stems mix ~/Music/Stems/song --solo drums,bass -o rhythm.wav
+stems skill install                           # Teach coding agents to use stems
+stems open song.mp3                           # The app, with that song
+```
+
+## Development
+
+```sh
+bin/build    # build/stems
+bin/test     # Qt Test, offscreen
+```
+
+C++ and Qt Quick, built with qmake6. The window follows the Omarchy theme's
+accent color and window rounding, and the language picked under Setup >
+Language (English, Danish, German, Spanish, French, and Portuguese so far).
+
+## License
+
+MIT. The theme follower, the language follower and the portal file picker are
+adapted from [Omacut](https://github.com/omacom-io/omacut) by David Heinemeier
+Hansson, also MIT.
