@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+cd "$ROOT"
+
+changes="$(git status --porcelain --untracked-files=no)" || exit 1
+if [ -n "$changes" ]; then
+  echo "Local changes in $ROOT. Commit or stash them, then run bin/update again." >&2
+  exit 1
+fi
+
+git pull --ff-only
+exec "$ROOT/bin/install" "$@"
