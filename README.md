@@ -32,6 +32,17 @@ bin/install
 This builds the package and installs it with `makepkg -fsi`. Stems then shows
 up in the Omarchy app launcher (`Super + Space`).
 
+To upgrade a checkout you already installed:
+
+```sh
+bin/update
+```
+
+This fast-forwards the checkout, then runs `bin/install` again so the launcher
+gets the new package. It stops when tracked files have local changes.
+Arguments are passed through to `makepkg`, so `bin/update --noconfirm` works.
+Pacman still asks for your password when it replaces the package.
+
 Splitting needs Demucs. If it's missing, Stems says so and offers to install
 it (press **I**), which runs:
 
