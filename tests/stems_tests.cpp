@@ -8,6 +8,7 @@
 #include <cmath>
 
 #include "backend.h"
+#include "downloader.h"
 #include "mixer.h"
 #include "pitchshifter.h"
 #include "separator.h"
@@ -394,7 +395,132 @@ mkdir -p "$out/$model" && for s in vocals drums bass other; do echo $s > "$out/$
         QVERIFY(!backend.notice().isEmpty());
     }
 
+    void downloaderRecognizesLinks()
+    {
+        QVERIFY(Downloader::isLink("https://www.youtube.com/watch?v=abc123"));
+        QVERIFY(Downloader::isLink("  https://youtu.be/abc123\n"));
+        QVERIFY(Downloader::isLink("http://example.com/song"));
+        QVERIFY(!Downloader::isLink("youtube.com/watch?v=abc123"));
+        QVERIFY(!Downloader::isLink("/home/me/song.mp3"));
+        QVERIFY(!Downloader::isLink("file:///home/me/song.mp3"));
+        QVERIFY(!Downloader::isLink("https://youtu.be/a b"));
+        QVERIFY(!Downloader::isLink("-o evil"));
+        QVERIFY(!Downloader::isLink(""));
+        // The link always comes after --, so it can never be read as an option.
+        const QStringList arguments = Downloader::arguments("/tmp/x", "https://youtu.be/abc");
+        QCOMPARE(arguments.mid(arguments.size() - 2), QStringList({"--", "https://youtu.be/abc"}));
+        QVERIFY(arguments.contains("--no-playlist"));
+    }
+
+    void downloaderParsesProgress()
+    {
+        QCOMPARE(Downloader::parseProgress("[download]  42.5% of    3.21MiB at  1.00MiB/s ETA 00:02"), 0.425);
+        QCOMPARE(Downloader::parseProgress("[download] 100% of    3.21MiB in 00:00:01"), 1.0);
+        QCOMPARE(Downloader::parseProgress("[youtube] abc: Downloading webpage"), -1.0);
+    }
+
+    void downloaderSavesTheAudio()
+    {
+        QTemporaryDir dir;
+        Downloader downloader(dir.filePath("Downloads"), fakeDownloader(dir));
+        QSignalSpy finished(&downloader, &Downloader::finished);
+        QSignalSpy titled(&downloader, &Downloader::titled);
+        QSignalSpy progress(&downloader, &Downloader::progress);
+        downloader.start("https://www.youtube.com/watch?v=abc123");
+        QVERIFY(finished.wait(5000));
+        QCOMPARE(finished.first().first().toString(), dir.filePath("Downloads/Fake Song.opus"));
+        QCOMPARE(titled.first().first().toString(), QString("Fake Song"));
+        bool halfway = false;
+        for (const auto &signal : progress)
+            halfway = halfway || signal.first().toDouble() == 0.5;
+        QVERIFY(halfway);
+    }
+
+    void downloaderReportsErrors()
+    {
+        QTemporaryDir dir;
+        const QString tool = script(dir, "yt-dlp",
+                                    "echo 'ERROR: [youtube] abc: Video unavailable. This video is private'; exit 1\n");
+        Downloader downloader(dir.filePath("Downloads"), tool);
+        QSignalSpy failed(&downloader, &Downloader::failed);
+        downloader.start("https://www.youtube.com/watch?v=abc");
+        QVERIFY(failed.wait(5000));
+        QVERIFY(failed.first().first().toString().contains("This video is private"));
+
+        // Not a link, and no yt-dlp, are both said plainly.
+        downloader.start("song.mp3");
+        QVERIFY(failed.wait(1000));
+        QVERIFY(failed.last().first().toString().contains("song.mp3"));
+        Downloader missing(dir.filePath("Downloads"), "");
+        if (!Downloader::findTool().isEmpty())
+            return;
+        QSignalSpy missingFailed(&missing, &Downloader::failed);
+        missing.start("https://youtu.be/abc");
+        QVERIFY(missingFailed.wait(1000));
+        QVERIFY(missingFailed.first().first().toString().contains("yt-dlp"));
+    }
+
+    void downloaderCancels()
+    {
+        QTemporaryDir dir;
+        Downloader downloader(dir.filePath("Downloads"), script(dir, "yt-dlp", "sleep 30\n"));
+        QSignalSpy failed(&downloader, &Downloader::failed);
+        downloader.start("https://youtu.be/abc");
+        QVERIFY(downloader.running());
+        downloader.cancel();
+        QVERIFY(failed.wait(5000));
+        QVERIFY(failed.first().first().toString().isEmpty());
+    }
+
+    void backendDownloadsThenSplitsALink()
+    {
+        QTemporaryDir dir;
+        FakePicker picker;
+        const QString demucs = script(dir, "demucs", R"(
+out=""; model=""
+while [ $# -gt 1 ]; do case "$1" in -o) out="$2"; shift;; -n) model="$2"; shift;; esac; shift; done
+echo "Separating track $1"
+mkdir -p "$out/$model" && for s in vocals drums bass other; do echo $s > "$out/$model/$s.wav"; done
+)");
+        Separator separator(dir.filePath("Stems"), demucs);
+        Downloader downloader(dir.filePath("Stems/Downloads"), fakeDownloader(dir));
+        Backend backend(&picker, &separator, &downloader);
+
+        // The header names the video once yt-dlp knows its title.
+        QStringList songs;
+        connect(&backend, &Backend::busyChanged, this, [&] { songs << backend.song(); });
+        backend.openLink("https://www.youtube.com/watch?v=abc123");
+        QVERIFY(backend.downloading());
+        QVERIFY(backend.busy());
+        QCOMPARE(backend.song(), QString("www.youtube.com"));
+        QTRY_VERIFY_WITH_TIMEOUT(!backend.busy() && Separator::isStemsFolder(dir.filePath("Stems/Fake Song")), 5000);
+        QVERIFY(songs.contains("Fake Song"));
+        QCOMPARE(Separator::stemFiles(dir.filePath("Stems/Fake Song")).size(), 4);
+        QVERIFY(QFileInfo::exists(dir.filePath("Stems/Downloads/Fake Song.opus")));
+
+        // Another job can't start while one runs, and a non-link is refused.
+        backend.openLink("not a link");
+        QVERIFY(backend.error().contains("not a link"));
+    }
+
 private:
+    // A stand-in for yt-dlp that prints what the real one does and saves a
+    // file where its -o template says.
+    static QString fakeDownloader(QTemporaryDir &dir)
+    {
+        return script(dir, "yt-dlp", R"(
+template=""
+while [ $# -gt 0 ]; do case "$1" in -o) template="$2"; shift;; esac; shift; done
+folder=$(dirname "$template")
+mkdir -p "$folder"
+echo "stems-title:Fake Song"
+echo "[download]  50.0% of 1.00MiB at 1.00MiB/s ETA 00:01"
+echo "[download] 100% of 1.00MiB in 00:00:01"
+echo "audio" > "$folder/Fake Song.opus"
+echo "stems-file:$folder/Fake Song.opus"
+)");
+    }
+
     class FakePicker : public FilePicker {
     public:
         void openAudio(const QString &) override {}

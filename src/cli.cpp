@@ -13,6 +13,7 @@
 #include <cstdio>
 
 #include "backend.h"
+#include "downloader.h"
 #include "mixer.h"
 #include "separator.h"
 
@@ -21,6 +22,8 @@ const char *Usage = R"(Usage:
   stems [open] [FILE]                 Open the app, optionally with a song or stems folder
   stems check [--json]                Report whether Demucs and ffmpeg are installed
   stems split FILE [--six] [--json]   Split a song into stems under ~/Music/Stems
+  stems split URL [--six] [--json]    Download a YouTube (or other) link's audio with
+                                      yt-dlp into ~/Music/Stems/Downloads, then split it
   stems mix FOLDER -o OUT.wav [--saved] [--mute a,b] [--solo a,b] [--cents N] [--json]
                                       Render a mix of a stems folder to a WAV file;
                                       --saved starts from the mix saved in the app,
@@ -102,7 +105,9 @@ int check(const Options &options) {
     const QString demucs = Separator::findEngine();
     const QString ffmpeg = QStandardPaths::findExecutable("ffmpeg");
     const QString uv = Backend::findUv();
-    QJsonObject result{{"demucs", demucs}, {"ffmpeg", ffmpeg}, {"uv", uv}, {"stemsRoot", Separator::defaultRoot()}};
+    const QString ytdlp = Downloader::findTool();
+    QJsonObject result{{"demucs", demucs}, {"ffmpeg", ffmpeg}, {"uv", uv}, {"ytdlp", ytdlp},
+                       {"stemsRoot", Separator::defaultRoot()}};
     if (demucs.isEmpty() || ffmpeg.isEmpty()) {
         QString message = demucs.isEmpty() ? QStringLiteral("Demucs is not installed; install it with: uv %1")
                                                  .arg(Backend::installArguments().join(' '))
@@ -115,31 +120,55 @@ int check(const Options &options) {
         std::fprintf(stderr, "stems: %s\n", message.toUtf8().constData());
         return 1;
     }
-    return succeed(options, result, QStringLiteral("demucs: %1\nffmpeg: %2\nstems go in: %3")
-                                        .arg(demucs, ffmpeg, Separator::defaultRoot()));
+    return succeed(options, result, QStringLiteral("demucs: %1\nffmpeg: %2\nyt-dlp: %3\nstems go in: %4")
+                                        .arg(demucs, ffmpeg, ytdlp.isEmpty() ? "not installed (links can't be split)" : ytdlp,
+                                             Separator::defaultRoot()));
+}
+
+// Prints a job's progress to stderr, once per whole percent or new status.
+auto progressPrinter() {
+    return [lastShown = -2, lastStatus = QString()](double fraction, const QString &status) mutable {
+        const int percent = fraction < 0 ? -1 : int(fraction * 100);
+        if (percent == lastShown && status == lastStatus)
+            return;
+        lastShown = percent;
+        lastStatus = status;
+        if (percent < 0)
+            std::fprintf(stderr, "%s\n", status.toUtf8().constData());
+        else
+            std::fprintf(stderr, "%s %d%%\n", status.toUtf8().constData(), percent);
+    };
 }
 
 int split(const Options &options) {
     if (options.positional.size() != 1)
-        return fail(options, "split takes one audio file");
-    const QString input = options.positional.first();
+        return fail(options, "split takes one audio file or link");
+    QString input = options.positional.first();
+    QString downloaded;
+
+    // A link is downloaded first; what it saves is split like any file.
+    if (Downloader::isLink(input)) {
+        if (Separator::findEngine().isEmpty())
+            return fail(options, "Demucs is not installed; run stems check");
+        Downloader downloader;
+        QEventLoop loop;
+        QString error;
+        QObject::connect(&downloader, &Downloader::progress, progressPrinter());
+        QObject::connect(&downloader, &Downloader::finished, [&](const QString &path) { downloaded = path; loop.quit(); });
+        QObject::connect(&downloader, &Downloader::failed, [&](const QString &e) { error = e; loop.quit(); });
+        downloader.start(input);
+        loop.exec();
+        if (downloaded.isEmpty())
+            return fail(options, error.isEmpty() ? QStringLiteral("cancelled") : error);
+        input = downloaded;
+    }
     if (!QFileInfo(input).isFile())
         return fail(options, QStringLiteral("%1 is not a file").arg(input));
 
     Separator separator;
     QEventLoop loop;
     QString folder, error;
-    int lastShown = -1;
-    QObject::connect(&separator, &Separator::progress, [&](double fraction, const QString &status) {
-        const int percent = fraction < 0 ? -1 : int(fraction * 100);
-        if (percent != lastShown) {
-            lastShown = percent;
-            if (percent < 0)
-                std::fprintf(stderr, "%s\n", status.toUtf8().constData());
-            else
-                std::fprintf(stderr, "%s %d%%\n", status.toUtf8().constData(), percent);
-        }
-    });
+    QObject::connect(&separator, &Separator::progress, progressPrinter());
     QObject::connect(&separator, &Separator::finished, [&](const QString &f) { folder = f; loop.quit(); });
     QObject::connect(&separator, &Separator::failed, [&](const QString &e) { error = e; loop.quit(); });
     separator.start(input, options.six);
@@ -148,7 +177,10 @@ int split(const Options &options) {
         return fail(options, error.isEmpty() ? QStringLiteral("cancelled") : error);
     QStringList lines{folder};
     lines << Separator::stemFiles(folder);
-    return succeed(options, {{"folder", folder}, {"stems", stemsJson(folder)}}, lines.join('\n'));
+    QJsonObject result{{"folder", folder}, {"stems", stemsJson(folder)}};
+    if (!downloaded.isEmpty())
+        result.insert("download", downloaded);
+    return succeed(options, result, lines.join('\n'));
 }
 
 int mix(const Options &options) {

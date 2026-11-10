@@ -4,9 +4,15 @@
 
 Stems splits a song into its instruments and plays them back together, so you
 can solo the bass line, mute the vocals for karaoke, or hear what the drummer
-is doing. Open an MP3 (or FLAC, WAV, OGG, M4A…), and
+is doing. Open an MP3 (or FLAC, WAV, OGG, M4A…), or paste a YouTube link, and
 [Demucs](https://github.com/adefossez/demucs) separates it into vocals, drums,
 bass and everything else. Choose **6 stems** to also get guitar and piano.
+
+A link is downloaded with [yt-dlp](https://github.com/yt-dlp/yt-dlp), just the
+audio and without re-encoding, into `~/Music/Stems/Downloads/`, then split like
+any other song. Press `Ctrl+V` with a link on the clipboard, press `L` to type
+one, or drag a link from the browser onto the window. Anything yt-dlp can
+read works, not only YouTube. Only download what you have the right to.
 
 Every stem plays from one audio stream, so they stay sample-locked, and mute,
 solo and volume take effect immediately. The pitch moves up or down by as much
@@ -45,12 +51,18 @@ That is a CPU-only PyTorch, about 1 GB, installed in your home folder. The
 first split also downloads the model, about 80 MB. On a laptop-class CPU,
 splitting takes roughly as long as the song.
 
+Links need yt-dlp, which the package installs. YouTube changes often enough
+that an old yt-dlp stops working; if downloads start failing, update it with
+your system (`omarchy-update`).
+
 ## Keys
 
 | Key | Action |
 | --- | --- |
 | `Space` | Play or pause (open a song when none is loaded) |
 | `O` | Open a song or a stems folder (or drop one on the window) |
+| `L` | Split a song from a YouTube link |
+| `Ctrl+V` | Split the YouTube link on the clipboard |
 | `1`–`6` | Mute a stem |
 | `Ctrl+1`–`6` | Solo a stem |
 | `↑` `↓` / `K` `J` | Select a stem |
@@ -68,7 +80,7 @@ splitting takes roughly as long as the song.
 | `F` | Show the stems folder |
 | `I` | Install Demucs |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo or redo a mix change |
-| `Esc` | Cancel the split |
+| `Esc` | Cancel the download or the split |
 | `?` | Show every shortcut |
 | `Q` | Quit |
 
@@ -81,12 +93,13 @@ Every command works without a display, takes `--json`, and exits 0 or 1:
 ```sh
 stems check                                   # Is Demucs installed?
 stems split song.mp3 [--six]                  # Split into ~/Music/Stems/song/
+stems split 'https://youtu.be/…'              # Download the audio, then split it
 stems mix ~/Music/Stems/song --mute vocals -o karaoke.wav
 stems mix ~/Music/Stems/song --solo drums,bass -o rhythm.wav
 stems mix ~/Music/Stems/song --saved -o as-i-left-it.wav    # The mix saved in the app
 stems mix ~/Music/Stems/song --cents -100 -o down-a-half-step.wav
 stems skill install                           # Teach coding agents to use stems
-stems open song.mp3                           # The app, with that song
+stems open song.mp3                           # The app, with that song (or a link)
 ```
 
 ## Development

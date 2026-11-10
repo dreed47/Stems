@@ -1,6 +1,6 @@
 ---
 name: stems
-description: Split a song into instrument stems (vocals, drums, bass, other; or 6 stems with guitar and piano) with the `stems` command, and render mixes with stems muted or soloed — e.g. a karaoke (no vocals) or drums-only track. Use when asked to separate, isolate, remove or extract vocals or instruments from an audio file.
+description: Split a song (an audio file or a YouTube link) into instrument stems (vocals, drums, bass, other; or 6 stems with guitar and piano) with the `stems` command, and render mixes with stems muted or soloed — e.g. a karaoke (no vocals) or drums-only track. Use when asked to separate, isolate, remove or extract vocals or instruments from an audio file.
 ---
 
 # stems
@@ -15,6 +15,9 @@ on stdout, exits 0 or 1, and writes progress and errors to stderr.
 stems check --json                      # is Demucs installed? where do stems go?
 stems split song.mp3 --json             # -> {"ok":true,"folder":...,"stems":[{"name","path"}]}
 stems split song.mp3 --six --json       # 6 stems, into "<song> (6 stems)"
+stems split 'https://www.youtube.com/watch?v=…' --json  # downloads the audio with yt-dlp
+                                        # into ~/Music/Stems/Downloads, then splits it;
+                                        # the result also has "download": <audio file>
 stems mix "<folder>" --mute vocals -o karaoke.wav --json
 stems mix "<folder>" --solo drums,bass -o rhythm.wav --json
 stems mix "<folder>" --cents -100 -o lower.wav --json  # pitch, -100..100 cents, tempo unchanged
@@ -26,6 +29,8 @@ stems open song.mp3                     # the GUI, to listen and solo/mute by ha
   it will take a few minutes. A song already split returns at once.
 - If `check` fails because Demucs is missing, the error shows the `uv`
   command that installs it; ask before running it (about 1 GB download).
+- Links are downloaded with yt-dlp (`stems check` shows whether it's there).
+  Playlists are not expanded: only the linked video is downloaded.
 - `--solo` wins over `--mute`, like on a mixing desk.
 - The app saves each song's mix to `<folder>/mix.json`; the CLI only reads it,
   with `--saved`, and never writes it.

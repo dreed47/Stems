@@ -4,6 +4,7 @@
         <file alias="TrackRow.qml">TrackRow.qml</file>
         <file alias="ChipButton.qml">ChipButton.qml</file>
         <file alias="HelpOverlay.qml">HelpOverlay.qml</file>
+        <file alias="PanelDialog.qml">PanelDialog.qml</file>
         <file alias="skill/SKILL.md">skill/SKILL.md</file>
         <file alias="i18n/en.json">i18n/en.json</file>
         <file alias="i18n/da.json">i18n/da.json</file>

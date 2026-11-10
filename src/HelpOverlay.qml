@@ -12,6 +12,8 @@ Rectangle {
     readonly property var keys: [
         ["Space", qsTr("Play or pause (open a song when none is loaded)")],
         ["O", qsTr("Open a song or a stems folder")],
+        ["L", qsTr("Split a song from a YouTube link")],
+        ["Ctrl+V", qsTr("Split the YouTube link on the clipboard")],
         ["1 – 6", qsTr("Mute a stem")],
         ["Ctrl+1 – 6", qsTr("Solo a stem")],
         ["↑ ↓  /  K J", qsTr("Select a stem")],
@@ -28,7 +30,7 @@ Rectangle {
         ["T", qsTr("Switch between 4 and 6 stems")],
         ["F", qsTr("Show the stems folder")],
         ["Ctrl+Z  /  Ctrl+Shift+Z", qsTr("Undo or redo a mix change")],
-        ["Esc", qsTr("Cancel the split")],
+        ["Esc", qsTr("Cancel the download or the split")],
         ["?", qsTr("Show or hide these shortcuts")],
         ["Q", qsTr("Quit")]
     ]

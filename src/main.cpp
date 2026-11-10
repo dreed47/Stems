@@ -10,6 +10,7 @@
 
 #include "backend.h"
 #include "cli.h"
+#include "downloader.h"
 #include "portalfilepicker.h"
 #include "separator.h"
 #include "theme.h"
@@ -28,7 +29,7 @@ int main(int argc, char *argv[]) {
     QGuiApplication app(argc, argv);
     app.setApplicationName("stems");
     app.setOrganizationName("stems");
-    app.setApplicationVersion("0.2.0");
+    app.setApplicationVersion("0.3.0");
 
     // Matches the window to stems.desktop, so the compositor (Wayland app_id)
     // and the launcher pick up the installed icon.
@@ -60,12 +61,17 @@ int main(int argc, char *argv[]) {
     if (engine.rootObjects().isEmpty())
         return 1;
 
-    // `stems FILE` and `stems open FILE` both start with that song.
+    // `stems FILE` and `stems open FILE` both start with that song, and a
+    // link in place of the file is downloaded first.
     QStringList rest = arguments.mid(1);
     if (rest.value(0) == "open")
         rest.removeFirst();
-    if (!rest.isEmpty())
-        backend.openPath(rest.first());
+    if (!rest.isEmpty()) {
+        if (Downloader::isLink(rest.first()))
+            backend.openLink(rest.first());
+        else
+            backend.openPath(rest.first());
+    }
 
     return app.exec();
 }

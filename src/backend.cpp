@@ -1,15 +1,18 @@
 #include "backend.h"
 
 #include <QDesktopServices>
+#include <QClipboard>
 #include <QDir>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QTimer>
 
-Backend::Backend(FilePicker *picker, Separator *separator, QObject *parent)
-    : QObject(parent), m_picker(picker), m_separator(separator) {
+Backend::Backend(FilePicker *picker, Separator *separator, Downloader *downloader, QObject *parent)
+    : QObject(parent), m_picker(picker), m_separator(separator),
+      m_downloader(downloader ? downloader : &m_ownDownloader) {
     m_sixStems = QSettings().value("sixStems", false).toBool();
 
     connect(m_picker, &FilePicker::openSelected, this, &Backend::openUrl);
@@ -23,6 +26,23 @@ Backend::Backend(FilePicker *picker, Separator *separator, QObject *parent)
     });
     connect(m_separator, &Separator::failed, this, [this](const QString &message) {
         // An empty message is a cancel the user asked for.
+        m_song.clear();
+        emit busyChanged();
+        if (!message.isEmpty())
+            setError(message);
+    });
+
+    // A download ends by opening what it saved, which splits it.
+    connect(m_downloader, &Downloader::titled, this, [this](const QString &title) {
+        m_song = title;
+        emit busyChanged();
+    });
+    connect(m_downloader, &Downloader::progress, this, &Backend::setProgress);
+    connect(m_downloader, &Downloader::finished, this, [this](const QString &path) {
+        emit busyChanged();
+        openPath(path);
+    });
+    connect(m_downloader, &Downloader::failed, this, [this](const QString &message) {
         m_song.clear();
         emit busyChanged();
         if (!message.isEmpty())
@@ -112,7 +132,50 @@ void Backend::open() {
 }
 
 void Backend::openUrl(const QUrl &url) {
-    openPath(url.isLocalFile() ? url.toLocalFile() : url.toString());
+    if (url.isLocalFile())
+        openPath(url.toLocalFile());
+    else if (url.scheme() == "http" || url.scheme() == "https")
+        openLink(url.toString());
+    else
+        openPath(url.toString());
+}
+
+void Backend::openLink(const QString &link) {
+    if (busy()) {
+        setError(tr("Wait for the current job to finish, or press Esc to cancel it."));
+        return;
+    }
+    if (!Downloader::isLink(link)) {
+        setError(tr("%1 isn't a web link.").arg(link.trimmed().left(200)));
+        return;
+    }
+    if (m_downloader->tool().isEmpty()) {
+        setError(tr("Downloading from a link needs yt-dlp. Install it with: omarchy-pkg-add yt-dlp"));
+        return;
+    }
+    // Without Demucs the download would only end in the same error.
+    if (!engineReady()) {
+        setError(tr("Demucs, the stem separation engine, isn't installed. Press I to install it."));
+        return;
+    }
+    setError({});
+    m_mixer.clear();
+    m_song = QUrl(link.trimmed()).host();
+    m_downloader->start(link);
+    emit busyChanged();
+}
+
+QString Backend::clipboardLink() const {
+    const QString text = QGuiApplication::clipboard()->text().trimmed();
+    return Downloader::isLink(text) ? text : QString();
+}
+
+void Backend::pasteLink() {
+    const QString link = clipboardLink();
+    if (link.isEmpty())
+        setError(tr("The clipboard has no link in it. Copy a YouTube link first."));
+    else
+        openLink(link);
 }
 
 void Backend::openPath(const QString &path) {
@@ -162,7 +225,9 @@ void Backend::loadFolder(const QString &folder) {
 }
 
 void Backend::cancel() {
-    if (splitting())
+    if (downloading())
+        m_downloader->cancel();
+    else if (splitting())
         m_separator->cancel();
     else if (installing())
         m_installer.kill();

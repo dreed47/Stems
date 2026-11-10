@@ -68,9 +68,12 @@ ApplicationWindow {
     Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }
     Shortcut { sequence: "Q"; context: Qt.ApplicationShortcut; onActivated: win.quit() }
     Shortcut { sequence: "Escape"; context: Qt.ApplicationShortcut
-        onActivated: win.helpVisible ? win.helpVisible = false : backend.error.length > 0 ? backend.dismissError() : backend.cancel() }
+        onActivated: linkDialog.visible ? linkDialog.close() : win.helpVisible ? win.helpVisible = false
+                     : backend.error.length > 0 ? backend.dismissError() : backend.cancel() }
     Shortcut { sequence: "Space"; context: Qt.ApplicationShortcut; onActivated: mixer.loaded ? mixer.togglePlay() : backend.open() }
     Shortcut { sequences: ["O", StandardKey.Open]; context: Qt.ApplicationShortcut; onActivated: backend.open() }
+    Shortcut { sequences: [StandardKey.Paste]; context: Qt.ApplicationShortcut; enabled: !linkDialog.visible; onActivated: backend.pasteLink() }
+    Shortcut { sequence: "L"; context: Qt.ApplicationShortcut; enabled: !linkDialog.visible; onActivated: linkDialog.show() }
     Shortcut { sequences: ["E", "Ctrl+E"]; context: Qt.ApplicationShortcut; enabled: mixer.loaded; onActivated: backend.exportMix() }
     Shortcut { sequence: "F"; context: Qt.ApplicationShortcut; onActivated: backend.showFolder() }
     Shortcut { sequence: "I"; context: Qt.ApplicationShortcut; enabled: !backend.engineReady; onActivated: backend.installEngine() }
@@ -135,7 +138,7 @@ ApplicationWindow {
 
                     Label {
                         Layout.fillWidth: true
-                        text: mixer.loaded ? mixer.title : backend.splitting ? backend.song : qsTr("Stems")
+                        text: backend.busy && backend.song.length > 0 ? backend.song : mixer.loaded ? mixer.title : qsTr("Stems")
                         font.pixelSize: 20
                         font.weight: Font.DemiBold
                         elide: Text.ElideRight
@@ -169,6 +172,14 @@ ApplicationWindow {
                         text: qsTr("Open")
                         flat: true
                         onClicked: backend.open()
+                    }
+                    Button {
+                        text: qsTr("Link")
+                        flat: true
+                        onClicked: linkDialog.show()
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 600
+                        ToolTip.text: qsTr("Split a song from a YouTube link (L)")
                     }
                     Button {
                         text: qsTr("Export mix")
@@ -221,6 +232,11 @@ ApplicationWindow {
                             Label {
                                 Layout.alignment: Qt.AlignHCenter
                                 text: qsTr("or press O to choose one")
+                                color: win.dim
+                            }
+                            Label {
+                                Layout.alignment: Qt.AlignHCenter
+                                text: qsTr("or paste a YouTube link with Ctrl+V")
                                 color: win.dim
                             }
                         }
@@ -292,6 +308,17 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         indeterminate: mixer.loading || backend.progress < 0
                         value: Math.max(0, backend.progress)
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        horizontalAlignment: Text.AlignHCenter
+                        color: win.dim
+                        visible: backend.downloading
+                        wrapMode: Text.WordWrap
+                        text: backend.progress >= 0
+                              ? qsTr("%1% downloaded. The song is split next.")
+                                    .arg(Math.round(backend.progress * 100).toLocaleString(Qt.locale(), "f", 0))
+                              : qsTr("Getting the audio with yt-dlp.")
                     }
                     Label {
                         Layout.fillWidth: true
@@ -511,11 +538,50 @@ ApplicationWindow {
         }
     }
 
-    Dialog {
+    // A link to download and split. It starts with the clipboard's link, if
+    // there is one, so Enter is often all it takes.
+    PanelDialog {
+        id: linkDialog
+        width: Math.min(win.width - 48, 560)
+        title: qsTr("Split a song from a link")
+        standardButtons: Dialog.Cancel | Dialog.Ok
+
+        function show() {
+            linkField.text = backend.clipboardLink()
+            open()
+        }
+
+        onOpened: {
+            linkField.forceActiveFocus()
+            linkField.selectAll()
+        }
+        onAccepted: backend.openLink(linkField.text)
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 8
+            TextField {
+                id: linkField
+                Layout.fillWidth: true
+                placeholderText: qsTr("YouTube link")
+                inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoAutoUppercase
+                onAccepted: linkDialog.accept()
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: win.dim
+                text: qsTr("The audio is saved in %1, then split like any other song.").arg(backend.stemsRoot + "/Downloads")
+            }
+        }
+    }
+
+    PanelDialog {
         id: quitDialog
-        anchors.centerIn: parent
+        objectName: "quitDialog"
         modal: true
-        title: backend.installing ? qsTr("Stop installing and quit?") : qsTr("Stop splitting and quit?")
+        title: backend.installing ? qsTr("Stop installing and quit?")
+             : backend.downloading ? qsTr("Stop downloading and quit?") : qsTr("Stop splitting and quit?")
         Label {
             text: qsTr("The work so far will be thrown away.")
             color: win.dim

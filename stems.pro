@@ -8,6 +8,7 @@ TEMPLATE = app
 HEADERS += \
     src/backend.h \
     src/cli.h \
+    src/downloader.h \
     src/filepicker.h \
     src/mixer.h \
     src/pitchshifter.h \
@@ -20,6 +21,7 @@ SOURCES += \
     src/main.cpp \
     src/backend.cpp \
     src/cli.cpp \
+    src/downloader.cpp \
     src/mixer.cpp \
     src/pitchshifter.cpp \
     src/portalfilepicker.cpp \
