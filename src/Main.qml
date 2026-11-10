@@ -68,7 +68,7 @@ ApplicationWindow {
     Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }
     Shortcut { sequence: "Q"; context: Qt.ApplicationShortcut; onActivated: win.quit() }
     Shortcut { sequence: "Escape"; context: Qt.ApplicationShortcut
-        onActivated: linkDialog.visible ? linkDialog.close() : win.helpVisible ? win.helpVisible = false
+        onActivated: replaceDialog.visible ? replaceDialog.reject() : linkDialog.visible ? linkDialog.close() : win.helpVisible ? win.helpVisible = false
                      : backend.error.length > 0 ? backend.dismissError() : backend.cancel() }
     Shortcut { sequence: "Space"; context: Qt.ApplicationShortcut; onActivated: mixer.loaded ? mixer.togglePlay() : backend.open() }
     Shortcut { sequences: ["O", StandardKey.Open]; context: Qt.ApplicationShortcut; onActivated: backend.open() }
@@ -574,6 +574,33 @@ ApplicationWindow {
                 text: qsTr("The audio is saved in %1, then split like any other song.").arg(backend.stemsRoot + "/Downloads")
             }
         }
+    }
+
+    // Another launch asked to open a song while a job runs.
+    Connections {
+        target: backend
+        function onPendingChanged() {
+            if (backend.pendingSong.length > 0)
+                replaceDialog.open()
+            else
+                replaceDialog.close()
+        }
+    }
+
+    PanelDialog {
+        id: replaceDialog
+        objectName: "replaceDialog"
+        width: Math.min(win.width - 48, 560)
+        title: qsTr("Stop the current job and open %1?").arg(backend.pendingSong)
+        Label {
+            width: parent.width
+            wrapMode: Label.Wrap
+            text: qsTr("The work so far will be thrown away.")
+            color: win.dim
+        }
+        standardButtons: Dialog.Cancel | Dialog.Ok
+        onAccepted: backend.replaceWithPending()
+        onRejected: backend.keepCurrent()
     }
 
     PanelDialog {

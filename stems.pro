@@ -1,4 +1,4 @@
-QT += core gui qml quick quickcontrols2 dbus multimedia
+QT += core gui qml quick quickcontrols2 dbus multimedia network
 
 CONFIG += c++17 release link_pkgconfig
 PKGCONFIG += rubberband
@@ -14,6 +14,7 @@ HEADERS += \
     src/pitchshifter.h \
     src/portalfilepicker.h \
     src/separator.h \
+    src/singleinstance.h \
     src/theme.h \
     src/translator.h
 
@@ -26,6 +27,7 @@ SOURCES += \
     src/pitchshifter.cpp \
     src/portalfilepicker.cpp \
     src/separator.cpp \
+    src/singleinstance.cpp \
     src/theme.cpp \
     src/translator.cpp
 

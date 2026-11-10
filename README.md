@@ -113,6 +113,10 @@ stems skill install                           # Teach coding agents to use stems
 stems open song.mp3                           # The app, with that song (or a link)
 ```
 
+Stems keeps to one window. With Stems already open, `stems open song.mp3` (or
+opening a song from a file manager) hands the song to that window. If a split
+or download is running there, Stems asks before stopping it.
+
 ## Development
 
 ```sh

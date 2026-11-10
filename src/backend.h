@@ -25,6 +25,9 @@ class Backend : public QObject {
     Q_PROPERTY(QString song READ song NOTIFY busyChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
     Q_PROPERTY(QString notice READ notice NOTIFY noticeChanged)
+    // A song another launch asked to open while a job runs, waiting on the
+    // user to stop the job or keep it.
+    Q_PROPERTY(QString pendingSong READ pendingSong NOTIFY pendingChanged)
     Q_PROPERTY(bool sixStems READ sixStems WRITE setSixStems NOTIFY sixStemsChanged)
     Q_PROPERTY(QString stemsRoot READ stemsRoot CONSTANT)
     Q_PROPERTY(QObject *mixer READ mixerObject CONSTANT)
@@ -45,6 +48,7 @@ public:
     QString song() const { return m_song; }
     QString error() const { return m_error; }
     QString notice() const { return m_notice; }
+    QString pendingSong() const;
     bool sixStems() const { return m_sixStems; }
     void setSixStems(bool six);
     QString stemsRoot() const { return m_separator->stemsRoot(); }
@@ -61,6 +65,12 @@ public:
     // The clipboard's text when it's a link, to start the link field with.
     Q_INVOKABLE QString clipboardLink() const;
     Q_INVOKABLE void cancel();
+    // Opens a path or link from another launch (`stems open FILE` while this
+    // window is open). During a job it waits in pendingSong for the user.
+    Q_INVOKABLE void openOrAsk(const QString &target);
+    // Stops the job and opens the pending song once it has stopped.
+    Q_INVOKABLE void replaceWithPending();
+    Q_INVOKABLE void keepCurrent();
     Q_INVOKABLE void installEngine();
     Q_INVOKABLE void exportMix();
     Q_INVOKABLE void showFolder();
@@ -77,6 +87,7 @@ signals:
     void progressChanged();
     void errorChanged();
     void noticeChanged();
+    void pendingChanged();
     void sixStemsChanged();
 
 private:
@@ -85,6 +96,7 @@ private:
     void setProgress(double fraction, const QString &status);
     void loadFolder(const QString &folder);
     void writeMix(const QUrl &url);
+    void openTarget(const QString &target);
 
     FilePicker *m_picker;
     Separator *m_separator;
@@ -98,5 +110,7 @@ private:
     QString m_song;
     QString m_error;
     QString m_notice;
+    QString m_pending;
+    bool m_replacing = false;
     bool m_sixStems = false;
 };

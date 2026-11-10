@@ -118,5 +118,6 @@
   "YouTube link": "Link do YouTube",
   "or paste a YouTube link with Ctrl+V": "ou cole um link do YouTube com Ctrl+V",
   "yt-dlp could not be started (%1).": "Não foi possível iniciar o yt-dlp (%1).",
-  "yt-dlp stopped without saving any audio.": "O yt-dlp parou sem guardar nenhum áudio."
+  "yt-dlp stopped without saving any audio.": "O yt-dlp parou sem guardar nenhum áudio.",
+  "Stop the current job and open %1?": "Parar a tarefa atual e abrir %1?"
 }

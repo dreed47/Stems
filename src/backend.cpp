@@ -49,6 +49,21 @@ Backend::Backend(FilePicker *picker, Separator *separator, Downloader *downloade
             setError(message);
     });
 
+    // A replaced job ends with busyChanged like any other; then the waiting
+    // song opens, after the handlers above have finished.
+    connect(this, &Backend::busyChanged, this, [this] {
+        if (m_replacing && !busy())
+            QTimer::singleShot(0, this, [this] {
+                if (!m_replacing || busy())
+                    return;
+                m_replacing = false;
+                const QString target = m_pending;
+                m_pending.clear();
+                emit pendingChanged();
+                openTarget(target);
+            });
+    });
+
     connect(&m_mixer, &Mixer::loadFailed, this, &Backend::setError);
     connect(&m_mixer, &Mixer::saveFailed, this, &Backend::setError);
 
@@ -222,6 +237,46 @@ void Backend::loadFolder(const QString &folder) {
     m_song.clear();
     emit busyChanged();
     m_mixer.load(Separator::stemFiles(folder), folder, QFileInfo(folder).fileName());
+}
+
+void Backend::openTarget(const QString &target) {
+    if (Downloader::isLink(target))
+        openLink(target);
+    else
+        openPath(target);
+}
+
+QString Backend::pendingSong() const {
+    if (m_pending.isEmpty())
+        return {};
+    return Downloader::isLink(m_pending) ? QUrl(m_pending.trimmed()).host() : QFileInfo(m_pending).completeBaseName();
+}
+
+void Backend::openOrAsk(const QString &target) {
+    if (target.trimmed().isEmpty())
+        return;
+    if (!busy()) {
+        openTarget(target);
+        return;
+    }
+    m_pending = target;
+    emit pendingChanged();
+}
+
+void Backend::replaceWithPending() {
+    if (m_pending.isEmpty())
+        return;
+    m_replacing = true;
+    if (busy())
+        cancel();
+    else
+        emit busyChanged();
+}
+
+void Backend::keepCurrent() {
+    m_pending.clear();
+    m_replacing = false;
+    emit pendingChanged();
 }
 
 void Backend::cancel() {

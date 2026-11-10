@@ -12,6 +12,7 @@
 #include "mixer.h"
 #include "pitchshifter.h"
 #include "separator.h"
+#include "singleinstance.h"
 #include "theme.h"
 #include "translator.h"
 
@@ -501,6 +502,65 @@ mkdir -p "$out/$model" && for s in vocals drums bass other; do echo $s > "$out/$
         // Another job can't start while one runs, and a non-link is refused.
         backend.openLink("not a link");
         QVERIFY(backend.error().contains("not a link"));
+    }
+
+    void singleInstanceHandsSongsToTheRunningOne()
+    {
+        QTemporaryDir dir;
+        const QString socket = dir.filePath("stems.socket");
+        SingleInstance running(socket), later(socket);
+        QVERIFY(!later.forward("/music/One.mp3"));
+
+        // A socket left behind by a crash doesn't stop the next Stems.
+        write(socket, "stale");
+        QVERIFY(running.listen());
+        QSignalSpy received(&running, &SingleInstance::received);
+        QVERIFY(later.forward("/music/Two Words.mp3"));
+        QTRY_COMPARE(received.size(), 1);
+        QCOMPARE(received.first().first().toString(), QString("/music/Two Words.mp3"));
+
+        // No song just brings the window forward.
+        QVERIFY(later.forward(""));
+        QTRY_COMPARE(received.size(), 2);
+        QCOMPARE(received.last().first().toString(), QString());
+    }
+
+    void backendAsksBeforeReplacingASplit()
+    {
+        QTemporaryDir dir;
+        write(dir.filePath("One.mp3"), "x");
+        write(dir.filePath("Two.mp3"), "x");
+        FakePicker picker;
+        // Splitting One never ends on its own; Two splits at once.
+        const QString demucs = script(dir, "demucs", R"(
+for last; do :; done
+case "$last" in *One*) exec sleep 30;; esac
+out=""; model=""
+while [ $# -gt 1 ]; do case "$1" in -o) out="$2"; shift;; -n) model="$2"; shift;; esac; shift; done
+mkdir -p "$out/$model" && for s in vocals drums bass other; do echo $s > "$out/$model/$s.wav"; done
+)");
+        Separator separator(dir.filePath("Stems"), demucs);
+        Backend backend(&picker, &separator);
+
+        backend.openOrAsk(dir.filePath("One.mp3"));
+        QVERIFY(backend.splitting());
+        QCOMPARE(backend.pendingSong(), QString());
+
+        // Keeping the split forgets the request.
+        backend.openOrAsk(dir.filePath("Two.mp3"));
+        QCOMPARE(backend.pendingSong(), QString("Two"));
+        QCOMPARE(backend.song(), QString("One"));
+        backend.keepCurrent();
+        QCOMPARE(backend.pendingSong(), QString());
+        QVERIFY(backend.splitting());
+
+        // Replacing stops One and splits Two.
+        backend.openOrAsk(dir.filePath("Two.mp3"));
+        backend.replaceWithPending();
+        QTRY_VERIFY_WITH_TIMEOUT(Separator::isStemsFolder(dir.filePath("Stems/Two")), 5000);
+        QCOMPARE(backend.pendingSong(), QString());
+        QVERIFY(!Separator::isStemsFolder(dir.filePath("Stems/One")));
+        QCOMPARE(backend.error(), QString());
     }
 
 private:
