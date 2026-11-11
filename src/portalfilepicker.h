@@ -14,6 +14,7 @@ public:
 
     void openAudio(const QString &folder) override;
     void saveMix(const QUrl &suggestedUrl) override;
+    void chooseFolder(const QString &folder) override;
 
 private slots:
     void handleResponse(uint response, const QVariantMap &results);
@@ -22,7 +23,8 @@ private:
     enum class Action {
         None,
         Open,
-        Save
+        Save,
+        Folder
     };
 
     void requestFile(const QString &method, const QString &title,

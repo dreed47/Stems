@@ -1,8 +1,10 @@
 #include "separator.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 
@@ -39,6 +41,11 @@ QString Separator::findEngine() {
 }
 
 QString Separator::defaultRoot() {
+    const QString chosen = QSettings().value("stemsRoot").toString();
+    return chosen.isEmpty() ? builtinRoot() : chosen;
+}
+
+QString Separator::builtinRoot() {
     QString music = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
     if (music.isEmpty() || music == QDir::homePath())
         music = QDir::homePath() + "/Music";
@@ -96,11 +103,39 @@ double Separator::parseProgress(const QString &chunk, int *bars, int *barIndex, 
     return fraction;
 }
 
-void Separator::start(const QString &input, bool sixStems) {
+bool Separator::replaceStems(const QString &source, const QString &target, const QString &backup) {
+    if (!QDir().mkpath(backup))
+        return false;
+    QStringList movedOut;
+    for (const auto &file : stemFiles(target)) {
+        if (!QDir().rename(file, QDir(backup).filePath(QFileInfo(file).fileName())))
+            break;
+        movedOut << file;
+    }
+    bool ok = movedOut.size() == stemFiles(backup).size() && stemFiles(target).isEmpty();
+    QStringList movedIn;
+    for (const auto &file : ok ? stemFiles(source) : QStringList()) {
+        const QString to = QDir(target).filePath(QFileInfo(file).fileName());
+        if (!QDir().rename(file, to)) {
+            ok = false;
+            break;
+        }
+        movedIn << to;
+    }
+    if (ok)
+        return true;
+    for (const auto &file : movedIn)
+        QFile::remove(file);
+    for (const auto &file : movedOut)
+        QDir().rename(QDir(backup).filePath(QFileInfo(file).fileName()), file);
+    return false;
+}
+
+void Separator::start(const QString &input, bool sixStems, bool replace) {
     if (running())
         return;
     const QString target = folderFor(input, sixStems);
-    if (isStemsFolder(target)) {
+    if (isStemsFolder(target) && !replace) {
         QMetaObject::invokeMethod(this, [this, target] { emit finished(target); }, Qt::QueuedConnection);
         return;
     }
@@ -127,6 +162,7 @@ void Separator::start(const QString &input, bool sixStems) {
     }
 
     m_target = target;
+    m_replace = replace;
     m_model = model(sixStems);
     m_log.clear();
     m_cancelled = false;
@@ -188,7 +224,18 @@ void Separator::handleFinished(int code, QProcess::ExitStatus status) {
                                      : tr("Demucs failed: %1").arg(detail));
         return;
     }
-    if (QFileInfo::exists(m_target) || !QDir().rename(source, m_target)) {
+    const bool moved = m_replace && isStemsFolder(m_target)
+        ? replaceStems(source, m_target, QDir(m_work->path()).filePath("old"))
+        : !QFileInfo::exists(m_target) && QDir().rename(source, m_target);
+    if (!moved) {
+        // Old stems that couldn't be put back must outlive the work folder.
+        const QString backup = QDir(m_work->path()).filePath("old");
+        if (!stemFiles(backup).isEmpty()) {
+            m_work->setAutoRemove(false);
+            m_work.reset();
+            emit failed(tr("Could not move the stems into %1. The old stems are in %2.").arg(m_target, backup));
+            return;
+        }
         m_work.reset();
         emit failed(tr("Could not move the stems into %1.").arg(m_target));
         return;

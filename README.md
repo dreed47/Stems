@@ -26,8 +26,18 @@ are saved to `mix.json` in the song's stems folder as you change them, and
 come back the next time you open the song.
 
 Stems are saved in `~/Music/Stems/<song>/`, one WAV per instrument, so each
-song is split only once. Opening the song again, or any stem in that folder,
-goes straight to the mixer. Your original file is never changed.
+song is split only once. Opening a song asks for 4 or 6 stems; if it's split
+that way already, open those stems or split it again. **Split again** in the
+header does the same for the open song. Splitting again replaces the stems and
+keeps the saved mix and exports. Opening any stem in a stems folder goes
+straight to the mixer. Your original file is never changed.
+
+Switching between 4 and 6 stems with a song open loads its other split, or
+asks to make one.
+
+Settings (`,`) sets where stems go and lists the programs Stems needs
+(Demucs, ffmpeg, uv, yt-dlp), with their versions and how to install any
+that are missing. The command line uses the same folder.
 
 ## Install
 
@@ -87,7 +97,8 @@ your system (`omarchy-update`).
 | `Shift+←` `→` | Back or forward 30 seconds |
 | `Home` | Back to the start |
 | `E` | Export what's audible as a WAV |
-| `T` | Switch between 4 and 6 stems for the next split |
+| `T` | Switch between 4 and 6 stems |
+| `,` | Settings |
 | `F` | Show the stems folder |
 | `I` | Install Demucs |
 | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo or redo a mix change |
@@ -112,6 +123,10 @@ stems mix ~/Music/Stems/song --cents -100 -o down-a-half-step.wav
 stems skill install                           # Teach coding agents to use stems
 stems open song.mp3                           # The app, with that song (or a link)
 ```
+
+Stems keeps to one window. With Stems already open, `stems open song.mp3` (or
+opening a song from a file manager) hands the song to that window. If a split
+or download is running there, Stems asks before stopping it.
 
 ## Development
 

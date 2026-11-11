@@ -15,9 +15,11 @@ public:
 
     virtual void openAudio(const QString &folder) = 0;
     virtual void saveMix(const QUrl &suggestedUrl) = 0;
+    virtual void chooseFolder(const QString &folder) = 0;
 
 signals:
     void openSelected(const QUrl &url);
     void saveSelected(const QUrl &url);
+    void folderSelected(const QUrl &url);
     void failed(const QString &message);
 };

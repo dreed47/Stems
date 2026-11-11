@@ -2,6 +2,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QProcess>
+#include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest>
@@ -12,6 +13,7 @@
 #include "mixer.h"
 #include "pitchshifter.h"
 #include "separator.h"
+#include "singleinstance.h"
 #include "theme.h"
 #include "translator.h"
 
@@ -19,6 +21,15 @@ class StemsTests : public QObject {
     Q_OBJECT
 
 private slots:
+    void initTestCase()
+    {
+        // Settings the tests write must never reach the real ~/.config.
+        QStandardPaths::setTestModeEnabled(true);
+        QSettings settings;
+        QVERIFY2(settings.fileName().contains(".qttest"), qPrintable(settings.fileName()));
+        settings.clear();
+    }
+
     void themeFallsBack()
     {
         QTemporaryDir dir;
@@ -273,6 +284,7 @@ mkdir -p "$out/$model" && for s in vocals drums bass other; do echo $s > "$out/$
         Backend backend(&picker, &separator);
         QVERIFY(!backend.engineReady());
         backend.openPath(dir.filePath("Tune.mp3"));
+        backend.splitAgain();
         QVERIFY(backend.error().contains("Demucs"));
         QVERIFY(!backend.splitting());
     }
@@ -503,6 +515,234 @@ mkdir -p "$out/$model" && for s in vocals drums bass other; do echo $s > "$out/$
         QVERIFY(backend.error().contains("not a link"));
     }
 
+    void singleInstanceHandsSongsToTheRunningOne()
+    {
+        QTemporaryDir dir;
+        const QString socket = dir.filePath("stems.socket");
+        SingleInstance running(socket), later(socket);
+        QVERIFY(!later.forward("/music/One.mp3"));
+
+        // A socket left behind by a crash doesn't stop the next Stems.
+        write(socket, "stale");
+        QVERIFY(running.listen());
+        QSignalSpy received(&running, &SingleInstance::received);
+        QVERIFY(later.forward("/music/Two Words.mp3"));
+        QTRY_COMPARE(received.size(), 1);
+        QCOMPARE(received.first().first().toString(), QString("/music/Two Words.mp3"));
+
+        // No song just brings the window forward.
+        QVERIFY(later.forward(""));
+        QTRY_COMPARE(received.size(), 2);
+        QCOMPARE(received.last().first().toString(), QString());
+    }
+
+    void backendAsksBeforeReplacingASplit()
+    {
+        QTemporaryDir dir;
+        write(dir.filePath("One.mp3"), "x");
+        write(dir.filePath("Two.mp3"), "x");
+        FakePicker picker;
+        // Splitting One never ends on its own; Two splits at once.
+        const QString demucs = script(dir, "demucs", R"(
+for last; do :; done
+case "$last" in *One*) exec sleep 30;; esac
+out=""; model=""
+while [ $# -gt 1 ]; do case "$1" in -o) out="$2"; shift;; -n) model="$2"; shift;; esac; shift; done
+mkdir -p "$out/$model" && for s in vocals drums bass other; do echo $s > "$out/$model/$s.wav"; done
+)");
+        Separator separator(dir.filePath("Stems"), demucs);
+        Backend backend(&picker, &separator);
+
+        backend.openOrAsk(dir.filePath("One.mp3"));
+        backend.splitAgain();
+        QVERIFY(backend.splitting());
+        QCOMPARE(backend.pendingSong(), QString());
+
+        // Keeping the split forgets the request.
+        backend.openOrAsk(dir.filePath("Two.mp3"));
+        QCOMPARE(backend.pendingSong(), QString("Two"));
+        QCOMPARE(backend.song(), QString("One"));
+        backend.keepCurrent();
+        QCOMPARE(backend.pendingSong(), QString());
+        QVERIFY(backend.splitting());
+
+        // Replacing stops One and splits Two.
+        backend.openOrAsk(dir.filePath("Two.mp3"));
+        backend.replaceWithPending();
+        QTRY_COMPARE(backend.askSong(), QString("Two"));
+        backend.splitAgain();
+        QTRY_VERIFY_WITH_TIMEOUT(Separator::isStemsFolder(dir.filePath("Stems/Two")), 5000);
+        QCOMPARE(backend.pendingSong(), QString());
+        QVERIFY(!Separator::isStemsFolder(dir.filePath("Stems/One")));
+        QCOMPARE(backend.error(), QString());
+    }
+
+    void separatorSplitsAgainKeepingOtherFiles()
+    {
+        QTemporaryDir dir;
+        QVERIFY(makeTones(dir));
+        write(dir.filePath("Tune.mp3"), "x");
+        const QString demucs = toneDemucs(dir);
+        Separator separator(dir.filePath("Stems"), demucs);
+        QSignalSpy finished(&separator, &Separator::finished);
+        separator.start(dir.filePath("Tune.mp3"), false);
+        QVERIFY(finished.wait(5000));
+        const QString folder = dir.filePath("Stems/Tune");
+        QCOMPARE(Separator::stemFiles(folder).size(), 3);
+        write(folder + "/mix.json", "{}");
+
+        // Splitting again swaps the stems but keeps the saved mix.
+        separator.start(dir.filePath("Tune.mp3"), false, true);
+        QVERIFY(separator.running());
+        QVERIFY(finished.wait(5000));
+        QCOMPARE(Separator::stemFiles(folder).size(), 4);
+        QVERIFY(QFileInfo::exists(folder + "/mix.json"));
+        QCOMPARE(QDir(dir.filePath("Stems")).entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden),
+                 QStringList{"Tune"});
+    }
+
+    void replaceStemsPutsTheOldOnesBack()
+    {
+        QTemporaryDir dir;
+        QDir().mkpath(dir.filePath("old/other.wav"));
+        QDir().mkpath(dir.filePath("new"));
+        write(dir.filePath("old/other.wav/keep"), "x");
+        for (const auto *name : {"vocals", "drums", "other"})
+            write(dir.filePath(QString("new/%1.wav").arg(name)), "new");
+        for (const auto *name : {"vocals", "drums"})
+            write(dir.filePath(QString("old/%1.wav").arg(name)), "old");
+        // A folder where the last new stem has to go makes the move fail part way.
+        QVERIFY(!Separator::replaceStems(dir.filePath("new"), dir.filePath("old"), dir.filePath("backup")));
+        QCOMPARE(Separator::stemFiles(dir.filePath("old")).size(), 2);
+        for (const auto &file : Separator::stemFiles(dir.filePath("old"))) {
+            QFile in(file);
+            QVERIFY(in.open(QIODevice::ReadOnly));
+            QCOMPARE(in.readAll(), QByteArray("old"));
+        }
+    }
+
+    void backendAsksBeforeSplittingAgain()
+    {
+        QTemporaryDir dir;
+        QVERIFY(makeTones(dir));
+        write(dir.filePath("Tune.mp3"), "x");
+        FakePicker picker;
+        Separator separator(dir.filePath("Stems"), toneDemucs(dir));
+        Backend backend(&picker, &separator);
+        backend.setSixStems(false);
+
+        // Every song asks 4 or 6 first; this one has no stems for either.
+        backend.openPath(dir.filePath("Tune.mp3"));
+        QCOMPARE(backend.askKind(), int(Backend::AskOpen));
+        QVERIFY(!backend.askHasStems());
+        QVERIFY(!backend.busy());
+        backend.splitAgain();
+        QTRY_VERIFY_WITH_TIMEOUT(backend.mixer()->loaded(), 10000);
+        QCOMPARE(backend.askKind(), int(Backend::AskNone));
+        QCOMPARE(backend.source(), dir.filePath("Tune.mp3"));
+
+        // Opening it again: it has 4 stems, not 6. Opening what's there doesn't split.
+        backend.openPath(dir.filePath("Tune.mp3"));
+        QCOMPARE(backend.askSong(), QString("Tune"));
+        QVERIFY(backend.askHasStems());
+        backend.setSixStems(true);
+        QVERIFY(!backend.askHasStems());
+        backend.setSixStems(false);
+        QVERIFY(!backend.busy());
+        backend.openExisting();
+        QCOMPARE(backend.askKind(), int(Backend::AskNone));
+        QVERIFY(!backend.busy());
+        QTRY_COMPARE_WITH_TIMEOUT(backend.mixer()->rowCount(), 3, 10000);
+
+        // Split again, from inside the app, replaces the stems.
+        backend.resplit();
+        QCOMPARE(backend.askKind(), int(Backend::AskOpen));
+        backend.splitAgain();
+        QVERIFY(backend.splitting());
+        QTRY_COMPARE_WITH_TIMEOUT(backend.mixer()->rowCount(), 4, 10000);
+
+        // Cancel does nothing.
+        backend.openPath(dir.filePath("Tune.mp3"));
+        backend.dismissAsk();
+        QCOMPARE(backend.askKind(), int(Backend::AskNone));
+        QVERIFY(!backend.busy());
+    }
+
+    void backendSwitchesStemCount()
+    {
+        QTemporaryDir dir;
+        QVERIFY(makeTones(dir));
+        write(dir.filePath("Tune.mp3"), "x");
+        FakePicker picker;
+        Separator separator(dir.filePath("Stems"), toneDemucs(dir));
+        Backend backend(&picker, &separator);
+        backend.setSixStems(false);
+        backend.openPath(dir.filePath("Tune.mp3"));
+        backend.splitAgain();
+        QTRY_VERIFY_WITH_TIMEOUT(backend.mixer()->loaded(), 10000);
+
+        // No 6-stem split yet: it asks, and cancel puts the count back.
+        backend.switchStems(true);
+        QCOMPARE(backend.askKind(), int(Backend::AskOtherCount));
+        backend.dismissAsk();
+        QVERIFY(!backend.sixStems());
+
+        backend.switchStems(true);
+        backend.splitAgain();
+        QTRY_VERIFY_WITH_TIMEOUT(!backend.busy() && backend.mixer()->loaded(), 10000);
+        QCOMPARE(backend.mixer()->folder(), dir.filePath("Stems/Tune (6 stems)"));
+        QVERIFY(backend.sixStems());
+
+        // Both splits exist now, so switching just loads the other one.
+        backend.switchStems(false);
+        QCOMPARE(backend.askKind(), int(Backend::AskNone));
+        QTRY_COMPARE_WITH_TIMEOUT(backend.mixer()->folder(), dir.filePath("Stems/Tune"), 10000);
+
+        // The same works for stems opened as a folder.
+        backend.openPath(dir.filePath("Stems/Tune"));
+        QTRY_VERIFY_WITH_TIMEOUT(backend.mixer()->loaded(), 10000);
+        backend.switchStems(true);
+        QTRY_COMPARE_WITH_TIMEOUT(backend.mixer()->folder(), dir.filePath("Stems/Tune (6 stems)"), 10000);
+    }
+
+    void backendSetsTheStemsFolder()
+    {
+        QTemporaryDir dir;
+        FakePicker picker;
+        Separator separator(dir.filePath("Stems"), "/nonexistent-demucs");
+        Downloader downloader(dir.filePath("Stems/Downloads"), "/bin/false");
+        Backend backend(&picker, &separator, &downloader);
+        QSignalSpy changed(&backend, &Backend::stemsRootChanged);
+
+        backend.setStemsRoot(dir.filePath("Elsewhere/"));
+        QCOMPARE(backend.stemsRoot(), dir.filePath("Elsewhere"));
+        QCOMPARE(separator.folderFor("/music/A.mp3", false), dir.filePath("Elsewhere/A"));
+        QCOMPARE(downloader.folder(), dir.filePath("Elsewhere/Downloads"));
+        QCOMPARE(Separator::defaultRoot(), dir.filePath("Elsewhere"));
+        QVERIFY(backend.customStemsRoot());
+        QCOMPARE(changed.size(), 1);
+
+        backend.resetStemsRoot();
+        QCOMPARE(backend.stemsRoot(), Separator::builtinRoot());
+        QVERIFY(!QSettings().contains("stemsRoot"));
+        QVERIFY(!backend.customStemsRoot());
+    }
+
+    void backendListsDependencies()
+    {
+        QTemporaryDir dir;
+        FakePicker picker;
+        Separator separator(dir.filePath("Stems"), "/nonexistent-demucs");
+        Backend backend(&picker, &separator);
+        backend.refreshDependencies();
+        QStringList names;
+        for (const auto &entry : backend.dependencies())
+            names << entry.toMap().value("name").toString();
+        QCOMPARE(names, QStringList({"Demucs", "ffmpeg", "uv", "yt-dlp"}));
+        // ffmpeg is on every machine that runs these tests (makeTones needs it).
+        QTRY_VERIFY_WITH_TIMEOUT(!backend.dependencies()[1].toMap().value("version").toString().isEmpty(), 5000);
+    }
+
 private:
     // A stand-in for yt-dlp that prints what the real one does and saves a
     // file where its -o template says.
@@ -525,6 +765,7 @@ echo "stems-file:$folder/Fake Song.opus"
     public:
         void openAudio(const QString &) override {}
         void saveMix(const QUrl &) override {}
+        void chooseFolder(const QString &) override {}
     };
 
     // The tone's frequency from its zero crossings over [from, to) frames of
@@ -565,6 +806,20 @@ echo "stems-file:$folder/Fake Song.opus"
     }
 
     // Three one-second tones in dir/song, made with ffmpeg.
+    // A stand-in for Demucs that copies the test tones in as stems: three
+    // the first time, four (with "other") every time after.
+    static QString toneDemucs(QTemporaryDir &dir)
+    {
+        return script(dir, "demucs", QString(R"(
+out=""; model=""
+while [ $# -gt 1 ]; do case "$1" in -o) out="$2"; shift;; -n) model="$2"; shift;; esac; shift; done
+echo "Separating track $1"
+mkdir -p "$out/$model" && cp "%1"/*.wav "$out/$model/"
+[ -e "%1.ran" ] && cp "%1/vocals.wav" "$out/$model/other.wav"
+touch "%1.ran"
+)").arg(dir.filePath("song")).toUtf8());
+    }
+
     static bool makeTones(QTemporaryDir &dir)
     {
         QDir().mkpath(dir.filePath("song"));

@@ -8,7 +8,7 @@
 class QTemporaryDir;
 
 // Splits one song into stems by running Demucs, and knows where stems live:
-// one folder per song under ~/Music/Stems, holding vocals.wav, drums.wav and
+// one folder per song under ~/Music/Stems (or the folder set in Settings), holding vocals.wav, drums.wav and
 // the rest. The original file is only ever read.
 class Separator : public QObject {
     Q_OBJECT
@@ -18,6 +18,7 @@ public:
     ~Separator() override;
 
     QString stemsRoot() const { return m_root; }
+    void setStemsRoot(const QString &root) { m_root = root; }
     QString engine() const { return m_engine; }
     void setEngine(const QString &path) { m_engine = path; }
     bool running() const { return m_process.state() != QProcess::NotRunning; }
@@ -25,17 +26,24 @@ public:
     // The stems folder a song splits into; the 6-stem model gets its own.
     QString folderFor(const QString &input, bool sixStems) const;
 
-    // Starts a split. A song that was split before finishes at once.
-    void start(const QString &input, bool sixStems);
+    // Starts a split. A song that was split before finishes at once, unless
+    // replace is set: then it's split again and the new stems replace the old.
+    void start(const QString &input, bool sixStems, bool replace = false);
     void cancel();
 
     static QString findEngine();
+    // Where stems go: the folder chosen in Settings, else builtinRoot().
     static QString defaultRoot();
+    static QString builtinRoot();
     static QString model(bool sixStems) { return sixStems ? "htdemucs_6s" : "htdemucs"; }
     static const QStringList &knownStems();
     // The stem WAVs in a folder, in the order the mixer shows them.
     static QStringList stemFiles(const QString &folder);
     static bool isStemsFolder(const QString &folder) { return stemFiles(folder).size() >= 2; }
+    // Moves the stems in source over the ones in target, leaving target's
+    // other files (the saved mix, exports) alone. The old stems go to
+    // backup first and come back if any move fails.
+    static bool replaceStems(const QString &source, const QString &target, const QString &backup);
     // Demucs reports each model's progress as its own tqdm bar; this turns
     // one chunk of its stderr into an overall fraction (or -1 for none).
     static double parseProgress(const QString &chunk, int *bars, int *barIndex, double *lastPercent);
@@ -57,6 +65,7 @@ private:
     std::unique_ptr<QTemporaryDir> m_work;
     QString m_log;
     bool m_cancelled = false;
+    bool m_replace = false;
     bool m_separating = false;
     int m_bars = 1;
     int m_barIndex = 0;

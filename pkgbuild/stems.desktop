@@ -12,6 +12,6 @@ Exec=stems open %f
 Icon=stems
 Terminal=false
 Categories=AudioVideo;Audio;Music;
-MimeType=audio/mpeg;audio/flac;audio/x-wav;audio/wav;audio/ogg;audio/mp4;audio/aac;audio/x-m4a;
+MimeType=audio/mpeg;audio/flac;audio/x-wav;audio/wav;audio/ogg;audio/x-opus+ogg;audio/opus;audio/mp4;audio/aac;audio/x-m4a;
 Keywords=stem;separation;karaoke;vocals;demucs;
 StartupWMClass=stems

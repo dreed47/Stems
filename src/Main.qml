@@ -68,7 +68,8 @@ ApplicationWindow {
     Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; onActivated: win.helpVisible = !win.helpVisible }
     Shortcut { sequence: "Q"; context: Qt.ApplicationShortcut; onActivated: win.quit() }
     Shortcut { sequence: "Escape"; context: Qt.ApplicationShortcut
-        onActivated: linkDialog.visible ? linkDialog.close() : win.helpVisible ? win.helpVisible = false
+        onActivated: replaceDialog.visible ? replaceDialog.reject() : askDialog.visible ? askDialog.reject()
+                     : settingsDialog.visible ? settingsDialog.close() : linkDialog.visible ? linkDialog.close() : win.helpVisible ? win.helpVisible = false
                      : backend.error.length > 0 ? backend.dismissError() : backend.cancel() }
     Shortcut { sequence: "Space"; context: Qt.ApplicationShortcut; onActivated: mixer.loaded ? mixer.togglePlay() : backend.open() }
     Shortcut { sequences: ["O", StandardKey.Open]; context: Qt.ApplicationShortcut; onActivated: backend.open() }
@@ -77,7 +78,8 @@ ApplicationWindow {
     Shortcut { sequences: ["E", "Ctrl+E"]; context: Qt.ApplicationShortcut; enabled: mixer.loaded; onActivated: backend.exportMix() }
     Shortcut { sequence: "F"; context: Qt.ApplicationShortcut; onActivated: backend.showFolder() }
     Shortcut { sequence: "I"; context: Qt.ApplicationShortcut; enabled: !backend.engineReady; onActivated: backend.installEngine() }
-    Shortcut { sequence: "T"; context: Qt.ApplicationShortcut; enabled: !backend.busy; onActivated: backend.sixStems = !backend.sixStems }
+    Shortcut { sequence: "T"; context: Qt.ApplicationShortcut; enabled: !backend.busy; onActivated: backend.switchStems(!backend.sixStems) }
+    Shortcut { sequences: [",", "Ctrl+,"]; context: Qt.ApplicationShortcut; onActivated: settingsDialog.open() }
     Shortcut { sequences: ["Up", "K"]; context: Qt.ApplicationShortcut; onActivated: mixer.selected = mixer.selected - 1 }
     Shortcut { sequences: ["Down", "J"]; context: Qt.ApplicationShortcut; onActivated: mixer.selected = mixer.selected + 1 }
     Shortcut { sequence: "M"; context: Qt.ApplicationShortcut; onActivated: mixer.toggleMute(mixer.selected) }
@@ -157,7 +159,7 @@ ApplicationWindow {
                                 required property bool modelData
                                 active: backend.sixStems === modelData
                                 text: modelData ? qsTr("6 stems") : qsTr("4 stems")
-                                onClicked: backend.sixStems = modelData
+                                onClicked: backend.switchStems(modelData)
                                 ToolTip.visible: hovered
                                 ToolTip.delay: 600
                                 ToolTip.text: modelData ? qsTr("Vocals, drums, bass, guitar, piano, other")
@@ -182,6 +184,16 @@ ApplicationWindow {
                         ToolTip.text: qsTr("Split a song from a YouTube link (L)")
                     }
                     Button {
+                        text: qsTr("Split again")
+                        flat: true
+                        visible: mixer.loaded && backend.source.length > 0
+                        enabled: !backend.busy
+                        onClicked: backend.resplit()
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 600
+                        ToolTip.text: qsTr("Split this song again, into 4 or 6 stems")
+                    }
+                    Button {
                         text: qsTr("Export mix")
                         flat: true
                         enabled: mixer.loaded
@@ -191,6 +203,15 @@ ApplicationWindow {
                         text: qsTr("Folder")
                         flat: true
                         onClicked: backend.showFolder()
+                    }
+                    Button {
+                        text: "⚙"
+                        font.pixelSize: 18
+                        flat: true
+                        onClicked: settingsDialog.open()
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 600
+                        ToolTip.text: qsTr("Settings (,)")
                     }
                     Button {
                         text: "?"
@@ -572,6 +593,208 @@ ApplicationWindow {
                 wrapMode: Text.WordWrap
                 color: win.dim
                 text: qsTr("The audio is saved in %1, then split like any other song.").arg(backend.stemsRoot + "/Downloads")
+            }
+        }
+    }
+
+    // Another launch asked to open a song while a job runs.
+    Connections {
+        target: backend
+        function onPendingChanged() {
+            if (backend.pendingSong.length > 0)
+                replaceDialog.open()
+            else
+                replaceDialog.close()
+        }
+    }
+
+    PanelDialog {
+        id: replaceDialog
+        objectName: "replaceDialog"
+        width: Math.min(win.width - 48, 560)
+        title: qsTr("Stop the current job and open %1?").arg(backend.pendingSong)
+        Label {
+            width: parent.width
+            wrapMode: Label.Wrap
+            text: qsTr("The work so far will be thrown away.")
+            color: win.dim
+        }
+        standardButtons: Dialog.Cancel | Dialog.Ok
+        onAccepted: backend.replaceWithPending()
+        onRejected: backend.keepCurrent()
+    }
+
+    // A song that needs a choice first: it has stems already, or the other
+    // stem count was picked and it has no split for that yet.
+    Connections {
+        target: backend
+        function onAskChanged() {
+            if (backend.askKind !== 0)
+                askDialog.open()
+            else
+                askDialog.close()
+        }
+    }
+
+    PanelDialog {
+        id: askDialog
+        objectName: "askDialog"
+        readonly property bool choosing: backend.askKind === 1
+        readonly property bool has: backend.askHasStems
+        width: Math.min(win.width - 48, 560)
+        title: choosing ? qsTr("Open %1").arg(backend.askSong)
+                        : backend.sixStems ? qsTr("Split %1 into 6 stems?").arg(backend.askSong)
+                                           : qsTr("Split %1 into 4 stems?").arg(backend.askSong)
+        ColumnLayout {
+            width: parent.width
+            spacing: 12
+            Row {
+                visible: askDialog.choosing
+                spacing: 6
+                Repeater {
+                    model: [false, true]
+                    delegate: ChipButton {
+                        required property bool modelData
+                        active: backend.sixStems === modelData
+                        text: modelData ? qsTr("6 stems") : qsTr("4 stems")
+                        onClicked: backend.sixStems = modelData
+                    }
+                }
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Label.Wrap
+                color: win.dim
+                text: !askDialog.choosing ? qsTr("This song hasn't been split that way yet.")
+                    : askDialog.has ? qsTr("Open the stems you have, or split it again. Splitting again replaces them.")
+                                    : qsTr("Vocals, drums, bass and other, or add guitar and piano with 6 stems.")
+            }
+        }
+        footer: DialogButtonBox {
+            background: null
+            padding: 12
+            Button {
+                text: qsTr("Split again")
+                flat: true
+                visible: askDialog.has
+                DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
+            }
+            Button {
+                text: askDialog.has ? qsTr("Open") : qsTr("Split")
+                flat: true
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+        }
+        // Set on the dialog: it overwrites its footer's own standardButtons.
+        standardButtons: Dialog.Cancel
+        onAccepted: has ? backend.openExisting() : backend.splitAgain()
+        onDiscarded: {
+            backend.splitAgain()
+            close()
+        }
+        // Esc, Cancel or a click outside all leave things as they were.
+        onClosed: if (backend.askKind !== 0) backend.dismissAsk()
+    }
+
+    PanelDialog {
+        id: settingsDialog
+        objectName: "settingsDialog"
+        width: Math.min(win.width - 48, 720)
+        title: qsTr("Settings")
+        standardButtons: Dialog.Close
+        onAboutToShow: backend.refreshDependencies()
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 8
+
+            Label {
+                text: qsTr("Stems folder")
+                font.weight: Font.DemiBold
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Label.Wrap
+                color: win.dim
+                text: qsTr("New splits and downloads go here. Songs split before stay where they are.")
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Label {
+                    Layout.fillWidth: true
+                    text: backend.stemsRoot
+                    elide: Label.ElideMiddle
+                }
+                Button {
+                    text: qsTr("Change…")
+                    flat: true
+                    onClicked: backend.chooseStemsRoot()
+                }
+                Button {
+                    text: qsTr("Default")
+                    flat: true
+                    visible: backend.customStemsRoot
+                    onClicked: backend.resetStemsRoot()
+                }
+            }
+
+            Label {
+                Layout.topMargin: 12
+                text: qsTr("Dependencies")
+                font.weight: Font.DemiBold
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Label.Wrap
+                color: win.dim
+                text: qsTr("Programs Stems runs. Point at a name to see which copy it uses.")
+            }
+            Repeater {
+                model: backend.dependencies
+                delegate: RowLayout {
+                    required property var modelData
+                    readonly property bool found: modelData.path.length > 0
+                    Layout.fillWidth: true
+                    spacing: 14
+                    Label {
+                        Layout.preferredWidth: 16
+                        text: found ? "✔" : modelData.required ? "✖" : "–"
+                        color: found ? theme.accent : modelData.required ? "#ff6b6b" : win.dim
+                    }
+                    Label {
+                        Layout.preferredWidth: 72
+                        text: modelData.name
+                        font.weight: Font.DemiBold
+                        ToolTip.visible: found && nameHover.hovered
+                        ToolTip.text: modelData.path
+                        HoverHandler { id: nameHover }
+                    }
+                    Label {
+                        Layout.preferredWidth: 96
+                        elide: Label.ElideRight
+                        text: !found ? qsTr("not installed") : modelData.version.length > 0 ? modelData.version : "…"
+                        color: found ? "white" : win.dim
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        elide: Label.ElideRight
+                        color: win.dim
+                        text: modelData.required ? modelData.purpose : qsTr("%1 (optional)").arg(modelData.purpose)
+                    }
+                    Button {
+                        visible: !found && modelData.install.length === 0
+                        text: qsTr("Install")
+                        flat: true
+                        enabled: !backend.busy
+                        onClicked: backend.installEngine()
+                    }
+                    Label {
+                        visible: !found && modelData.install.length > 0
+                        text: modelData.install
+                        font.family: "monospace"
+                        color: win.dim
+                    }
+                }
             }
         }
     }

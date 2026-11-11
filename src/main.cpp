@@ -7,12 +7,15 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QUrl>
+#include <QFileInfo>
+#include <QWindow>
 
 #include "backend.h"
 #include "cli.h"
 #include "downloader.h"
 #include "portalfilepicker.h"
 #include "separator.h"
+#include "singleinstance.h"
 #include "theme.h"
 #include "translator.h"
 
@@ -44,6 +47,21 @@ int main(int argc, char *argv[]) {
     if (command)
         return Cli::run(arguments);
 
+    // `stems FILE` and `stems open FILE` both start with that song, and a
+    // link in place of the file is downloaded first.
+    QStringList rest = arguments.mid(1);
+    if (rest.value(0) == "open")
+        rest.removeFirst();
+    QString target = rest.value(0);
+    if (!target.isEmpty() && !Downloader::isLink(target))
+        target = QFileInfo(target).absoluteFilePath();
+
+    // With Stems already open, the song goes to that window instead.
+    SingleInstance instance;
+    if (instance.forward(target))
+        return 0;
+    instance.listen();
+
     QQuickStyle::setStyle("Material");
 
     Theme theme;
@@ -61,17 +79,18 @@ int main(int argc, char *argv[]) {
     if (engine.rootObjects().isEmpty())
         return 1;
 
-    // `stems FILE` and `stems open FILE` both start with that song, and a
-    // link in place of the file is downloaded first.
-    QStringList rest = arguments.mid(1);
-    if (rest.value(0) == "open")
-        rest.removeFirst();
-    if (!rest.isEmpty()) {
-        if (Downloader::isLink(rest.first()))
-            backend.openLink(rest.first());
-        else
-            backend.openPath(rest.first());
-    }
+    if (!target.isEmpty())
+        backend.openOrAsk(target);
+
+    auto *window = qobject_cast<QWindow *>(engine.rootObjects().first());
+    QObject::connect(&instance, &SingleInstance::received, &backend, [&backend, window](const QString &song) {
+        if (window) {
+            window->show();
+            window->raise();
+            window->requestActivate();
+        }
+        backend.openOrAsk(song);
+    });
 
     return app.exec();
 }
