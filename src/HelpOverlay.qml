@@ -31,6 +31,7 @@ Rectangle {
         ["F", qsTr("Show the stems folder")],
         ["Ctrl+Z  /  Ctrl+Shift+Z", qsTr("Undo or redo a mix change")],
         ["Esc", qsTr("Cancel the download or the split")],
+        [",", qsTr("Settings: stems folder and dependencies")],
         ["?", qsTr("Show or hide these shortcuts")],
         ["Q", qsTr("Quit")]
     ]

@@ -147,6 +147,17 @@ bool PortalFilePicker::connectToRequestPath(const QString &path) {
         this, SLOT(handleResponse(uint,QVariantMap)));
 }
 
+void PortalFilePicker::chooseFolder(const QString &folder) {
+    QVariantMap options;
+    options.insert(QStringLiteral("accept_label"), QCoreApplication::translate("FilePicker", "Choose"));
+    options.insert(QStringLiteral("modal"), true);
+    options.insert(QStringLiteral("directory"), true);
+    if (QDir(folder).exists())
+        options.insert(QStringLiteral("current_folder"), portalPathBytes(folder));
+    requestFile(QStringLiteral("OpenFile"), QCoreApplication::translate("FilePicker", "Choose Where Stems Go"),
+                options, Action::Folder);
+}
+
 void PortalFilePicker::closePendingRequest() {
     if (m_pendingPath.isEmpty())
         return;
@@ -248,6 +259,8 @@ void PortalFilePicker::handleResponse(uint response, const QVariantMap &results)
         emit openSelected(url);
     else if (action == Action::Save)
         emit saveSelected(url);
+    else if (action == Action::Folder)
+        emit folderSelected(url);
 }
 
 void PortalFilePicker::clearPending() {

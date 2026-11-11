@@ -17,6 +17,10 @@ Backend::Backend(FilePicker *picker, Separator *separator, Downloader *downloade
 
     connect(m_picker, &FilePicker::openSelected, this, &Backend::openUrl);
     connect(m_picker, &FilePicker::saveSelected, this, &Backend::writeMix);
+    connect(m_picker, &FilePicker::folderSelected, this, [this](const QUrl &url) {
+        if (url.isLocalFile())
+            setStemsRoot(url.toLocalFile());
+    });
     connect(m_picker, &FilePicker::failed, this, &Backend::setError);
 
     connect(m_separator, &Separator::progress, this, &Backend::setProgress);
@@ -40,7 +44,11 @@ Backend::Backend(FilePicker *picker, Separator *separator, Downloader *downloade
     connect(m_downloader, &Downloader::progress, this, &Backend::setProgress);
     connect(m_downloader, &Downloader::finished, this, [this](const QString &path) {
         emit busyChanged();
-        openPath(path);
+        // The 4 or 6 stems picked before the download, without asking again.
+        if (QFileInfo(path).isFile())
+            split(QFileInfo(path).absoluteFilePath(), false);
+        else
+            openPath(path);
     });
     connect(m_downloader, &Downloader::failed, this, [this](const QString &message) {
         m_song.clear();
@@ -98,6 +106,8 @@ Backend::Backend(FilePicker *picker, Separator *separator, Downloader *downloade
         } else {
             setNotice(tr("Demucs is installed. Open a song to split it."));
         }
+        if (!m_dependencies.isEmpty())
+            refreshDependencies();
     });
 }
 
@@ -114,6 +124,155 @@ void Backend::setSixStems(bool six) {
     m_sixStems = six;
     QSettings().setValue("sixStems", six);
     emit sixStemsChanged();
+    if (m_askKind != AskNone)
+        emit askChanged();
+}
+
+bool Backend::customStemsRoot() const {
+    return stemsRoot() != Separator::builtinRoot();
+}
+
+void Backend::setStemsRoot(const QString &root) {
+    const QString clean = QDir::cleanPath(root);
+    if (clean.isEmpty() || clean == stemsRoot())
+        return;
+    QSettings settings;
+    if (clean == Separator::builtinRoot())
+        settings.remove("stemsRoot");
+    else
+        settings.setValue("stemsRoot", clean);
+    m_separator->setStemsRoot(clean);
+    m_downloader->setFolder(clean + "/Downloads");
+    emit stemsRootChanged();
+}
+
+void Backend::chooseStemsRoot() {
+    m_picker->chooseFolder(stemsRoot());
+}
+
+void Backend::resetStemsRoot() {
+    setStemsRoot(Separator::builtinRoot());
+}
+
+bool Backend::askHasStems() const {
+    return !m_ask.isEmpty() && Separator::isStemsFolder(m_separator->folderFor(m_ask, m_sixStems));
+}
+
+void Backend::setSource(const QString &song) {
+    if (song == m_source)
+        return;
+    m_source = song;
+    emit sourceChanged();
+}
+
+void Backend::resplit() {
+    if (!busy() && !m_source.isEmpty() && QFileInfo::exists(m_source))
+        setAsk(m_source, AskOpen);
+}
+
+void Backend::setAsk(const QString &song, Ask kind) {
+    m_ask = song;
+    m_askKind = song.isEmpty() ? AskNone : kind;
+    if (m_askKind != AskOtherCount)
+        m_askRevertsCount = false;
+    emit askChanged();
+}
+
+void Backend::switchStems(bool six) {
+    if (busy() || six == m_sixStems)
+        return;
+    setSixStems(six);
+    if (!m_mixer.loaded())
+        return;
+    if (!m_source.isEmpty() && QFileInfo::exists(m_source)) {
+        const QString folder = m_separator->folderFor(m_source, six);
+        if (Separator::isStemsFolder(folder)) {
+            loadFolder(folder);
+        } else {
+            setAsk(m_source, AskOtherCount);
+            m_askRevertsCount = true;
+        }
+        return;
+    }
+    // Stems opened as a folder: the other split, if there is one, sits beside it.
+    QString name = QFileInfo(m_mixer.folder()).fileName();
+    name.remove(QRegularExpression(" \\(6 stems\\)$"));
+    const QString other = QFileInfo(m_mixer.folder()).dir().filePath(six ? name + " (6 stems)" : name);
+    if (Separator::isStemsFolder(other))
+        loadFolder(other);
+}
+
+void Backend::openExisting() {
+    const QString song = m_ask;
+    setAsk({}, AskNone);
+    if (song.isEmpty() || busy())
+        return;
+    setSource(song);
+    loadFolder(m_separator->folderFor(song, m_sixStems));
+}
+
+void Backend::splitAgain() {
+    const QString song = m_ask;
+    const bool replace = askHasStems();
+    setAsk({}, AskNone);
+    if (song.isEmpty())
+        return;
+    if (busy()) {
+        setError(tr("Wait for the current job to finish, or press Esc to cancel it."));
+        return;
+    }
+    split(song, replace);
+}
+
+void Backend::dismissAsk() {
+    if (m_askRevertsCount)
+        setSixStems(!m_sixStems);
+    setAsk({}, AskNone);
+}
+
+void Backend::refreshDependencies() {
+    struct Tool {
+        QString name, path, purpose, install;
+        bool required;
+        QString program;
+        QStringList arguments;
+        QString pattern;
+    };
+    const QString uv = findUv();
+    const QList<Tool> tools{
+        {"Demucs", Separator::findEngine(), tr("Splits songs into stems"), {}, true,
+         uv, {"tool", "list"}, R"(^demucs v(\S+))"},
+        {"ffmpeg", QStandardPaths::findExecutable("ffmpeg"), tr("Reads songs and plays stems"), "omarchy-pkg-add ffmpeg", true,
+         QStandardPaths::findExecutable("ffmpeg"), {"-version"}, R"(^ffmpeg version (\S+))"},
+        {"uv", uv, tr("Installs Demucs"), "omarchy-pkg-add uv", false, uv, {"--version"}, R"(^uv (\S+))"},
+        {"yt-dlp", Downloader::findTool(), tr("Downloads songs from links"), "omarchy-pkg-add yt-dlp", false,
+         Downloader::findTool(), {"--version"}, R"(^(\S+))"},
+    };
+    m_dependencies.clear();
+    for (int i = 0; i < tools.size(); ++i) {
+        const Tool &tool = tools[i];
+        m_dependencies << QVariantMap{{"name", tool.name}, {"path", tool.path}, {"purpose", tool.purpose},
+                                      {"install", tool.install}, {"required", tool.required},
+                                      {"version", tool.program.isEmpty() && !tool.path.isEmpty() ? tr("installed") : QString()}};
+        if (tool.path.isEmpty() || tool.program.isEmpty())
+            continue;
+        auto *process = new QProcess(this);
+        connect(process, &QProcess::finished, this, [this, process, i, pattern = tool.pattern, path = tool.path] {
+            process->deleteLater();
+            const auto match = QRegularExpression(pattern, QRegularExpression::MultilineOption)
+                                   .match(QString::fromUtf8(process->readAllStandardOutput()));
+            // A refresh since this started has its own list.
+            if (i >= m_dependencies.size() || m_dependencies[i].toMap().value("path") != path)
+                return;
+            QVariantMap entry = m_dependencies[i].toMap();
+            entry["version"] = match.hasMatch() ? match.captured(1) : tr("installed");
+            m_dependencies[i] = entry;
+            emit dependenciesChanged();
+        });
+        connect(process, &QProcess::errorOccurred, process, &QObject::deleteLater);
+        process->start(tool.program, tool.arguments);
+    }
+    emit dependenciesChanged();
 }
 
 void Backend::setError(const QString &message) {
@@ -207,6 +366,7 @@ void Backend::openPath(const QString &path) {
 
     // A stems folder, or one of the stems in it, opens straight in the mixer.
     if (info.isDir()) {
+        setSource({});
         if (Separator::isStemsFolder(path))
             loadFolder(path);
         else
@@ -214,22 +374,24 @@ void Backend::openPath(const QString &path) {
         return;
     }
     if (Separator::knownStems().contains(info.completeBaseName()) && Separator::isStemsFolder(info.absolutePath())) {
+        setSource({});
         loadFolder(info.absolutePath());
         return;
     }
 
-    const QString folder = m_separator->folderFor(path, m_sixStems);
-    if (Separator::isStemsFolder(folder)) {
-        loadFolder(folder);
-        return;
-    }
+    // Pick 4 or 6 stems, and open the stems there are or split (again).
+    setAsk(info.absoluteFilePath(), AskOpen);
+}
+
+void Backend::split(const QString &path, bool replace) {
     if (!engineReady()) {
         setError(tr("Demucs, the stem separation engine, isn't installed. Press I to install it."));
         return;
     }
     m_mixer.clear();
-    m_song = info.completeBaseName();
-    m_separator->start(path, m_sixStems);
+    setSource(path);
+    m_song = QFileInfo(path).completeBaseName();
+    m_separator->start(path, m_sixStems, replace);
     emit busyChanged();
 }
 

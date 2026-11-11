@@ -14,6 +14,7 @@ public:
     ~Downloader() override;
 
     QString folder() const { return m_folder; }
+    void setFolder(const QString &folder) { m_folder = folder; }
     QString tool() const { return m_tool; }
     bool running() const { return m_process.state() != QProcess::NotRunning; }
 
