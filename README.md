@@ -1,6 +1,6 @@
 # Stems
 
-![Stems playing a song split into vocals, drums, bass and other, with the vocals muted and the pitch raised 23 cents](docs/screenshot.png)
+![Stems counting in to a 120 BPM song split into vocals, drums, bass and other, with the vocals muted and the pitch raised 23 cents](docs/screenshot.png)
 
 Stems splits a song into its instruments and plays them back together, so you
 can solo the bass line, mute the vocals for karaoke, or hear what the drummer
