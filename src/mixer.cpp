@@ -63,8 +63,10 @@ protected:
             renderClicks(out, m_mixer->m_countDone.load(), count);
             if (m_mixer->m_countLeft.compare_exchange_strong(left, left - count))
                 m_mixer->m_countDone += count;
-            if (count == frames)
+            if (count == frames) {
+                m_mixer->m_rendered += total;
                 return total * BytesPerFrame;
+            }
             out += count * Channels;
             frames -= count;
         }
@@ -120,6 +122,7 @@ protected:
         m_mixer->m_frame.compare_exchange_strong(from, cursor);
         if (written < frames)
             m_mixer->m_ended = true;
+        m_mixer->m_rendered += total;
         return total * BytesPerFrame;
     }
 
@@ -483,6 +486,17 @@ void Mixer::pause() {
     emit playingChanged();
 }
 
+void Mixer::toStart() {
+    // Playing with a count-in, going back counts in again.
+    if (m_playing && m_countIn) {
+        pause();
+        seek(0);
+        play();
+    } else {
+        seek(0);
+    }
+}
+
 void Mixer::togglePlay() {
     m_playing ? pause() : play();
 }
@@ -522,7 +536,9 @@ void Mixer::updatePosition() {
 
     // During a count-in the playhead waits where the song will come in.
     if (m_countLength > 0) {
-        const qint64 heard = m_countDone.load() - buffered;
+        // Everything the stream has handed over since the count began, clicks
+        // and song alike, less what's still waiting in the sink.
+        const qint64 heard = m_rendered.load() - m_countBase - buffered;
         if (heard < m_countLength || !m_playing) {
             const qint64 interval = m_countInterval.load();
             const qint64 beat = heard >= 0 && interval > 0 ? heard / interval : -1;
@@ -641,6 +657,7 @@ void Mixer::startCountIn() {
     m_countInterval = qRound64(plan.interval * SampleRate);
     m_countClicks = m_countInBeats;
     m_countDone = 0;
+    m_countBase = m_rendered.load();
     m_countLeft = m_countLength;
     m_position = double(m_countStart) / SampleRate;
     emit positionChanged();

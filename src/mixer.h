@@ -88,6 +88,8 @@ public:
     Q_INVOKABLE void pause();
     Q_INVOKABLE void seek(double seconds);
     Q_INVOKABLE void skip(double seconds) { seek(position() + seconds); }
+    // Back to the beginning; while playing with a count-in, counts in again.
+    Q_INVOKABLE void toStart();
 
     Q_INVOKABLE void toggleMute(int row);
     Q_INVOKABLE void toggleSolo(int row);
@@ -226,6 +228,10 @@ private:
     std::atomic<qint64> m_countDone{0};
     std::atomic<qint64> m_countInterval{0};
     std::atomic<int> m_countClicks{0};
+    // Every frame the stream has handed to the sink, so the UI can tell
+    // when the count-in has been heard out; m_countBase is where it began.
+    std::atomic<qint64> m_rendered{0};
+    qint64 m_countBase = 0;
 
     std::unique_ptr<Stream> m_stream;
     QAudioSink *m_sink = nullptr;

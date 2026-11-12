@@ -96,7 +96,7 @@ ApplicationWindow {
     Shortcut { sequence: "Right"; context: Qt.ApplicationShortcut; onActivated: mixer.skip(5) }
     Shortcut { sequence: "Shift+Left"; context: Qt.ApplicationShortcut; onActivated: mixer.skip(-30) }
     Shortcut { sequence: "Shift+Right"; context: Qt.ApplicationShortcut; onActivated: mixer.skip(30) }
-    Shortcut { sequence: "Home"; context: Qt.ApplicationShortcut; onActivated: mixer.seek(0) }
+    Shortcut { sequence: "Home"; context: Qt.ApplicationShortcut; onActivated: mixer.toStart() }
     Shortcut { sequence: "B"; context: Qt.ApplicationShortcut; autoRepeat: false; onActivated: mixer.tap() }
     Shortcut { sequence: "Shift+B"; context: Qt.ApplicationShortcut; onActivated: mixer.clearTap() }
     Shortcut { sequence: "C"; context: Qt.ApplicationShortcut; onActivated: mixer.toggleCountIn() }
@@ -419,6 +419,42 @@ ApplicationWindow {
                     anchors.leftMargin: 16
                     anchors.rightMargin: 20
                     spacing: roomy ? 14 : 8
+
+                    // Back to the beginning: a bar and a triangle pointing left.
+                    AbstractButton {
+                        id: toStartButton
+                        Layout.preferredWidth: 36
+                        Layout.preferredHeight: 36
+                        focusPolicy: Qt.NoFocus
+                        hoverEnabled: true
+                        onClicked: mixer.toStart()
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 600
+                        ToolTip.text: qsTr("Back to the start (Home)")
+                        background: Rectangle {
+                            radius: width / 2
+                            color: toStartButton.hovered ? "#26262c" : "transparent"
+                            border.width: 1
+                            border.color: "#34343b"
+                        }
+                        contentItem: Canvas {
+                            property color ink: "#e6e6ea"
+                            onInkChanged: requestPaint()
+                            onPaint: {
+                                const ctx = getContext("2d")
+                                ctx.reset()
+                                ctx.fillStyle = ink
+                                const cx = width / 2, cy = height / 2
+                                ctx.fillRect(cx - 7, cy - 6, 2.5, 12)
+                                ctx.beginPath()
+                                ctx.moveTo(cx + 6, cy - 6)
+                                ctx.lineTo(cx - 4, cy)
+                                ctx.lineTo(cx + 6, cy + 6)
+                                ctx.closePath()
+                                ctx.fill()
+                            }
+                        }
+                    }
 
                     AbstractButton {
                         Layout.preferredWidth: 44
