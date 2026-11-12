@@ -170,5 +170,17 @@
   "Tap along to set the tempo": "Im Takt mittippen, um das Tempo festzulegen",
   "Back to the tempo found in the drums": "Zurück zum Tempo des Schlagzeugs",
   "Count in before playing, or not": "Vor dem Abspielen einzählen oder nicht",
-  "Back to the start (Home)": "Zurück zum Anfang (Pos1)"
+  "Back to the start (Home)": "Zurück zum Anfang (Pos1)",
+  "Intro": "Intro",
+  "Verse": "Strophe",
+  "Pre-chorus": "Pre-Chorus",
+  "Chorus": "Refrain",
+  "Bridge": "Bridge",
+  "Instrumental": "Instrumental",
+  "Outro": "Outro",
+  "%1 %2": "%1 %2",
+  "Finding the verses and choruses…": "Strophen und Refrains werden gesucht…",
+  "No sections found": "Keine Abschnitte gefunden",
+  "%1, %2 – %3. Click to play from here (Ctrl+← →).": "%1, %2 – %3. Klicken, um ab hier zu spielen (Strg+← →).",
+  "Previous or next section": "Vorheriger oder nächster Abschnitt"
 }

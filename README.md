@@ -33,6 +33,16 @@ with **Tap** (`B`): taps made while the song plays also set where the beats
 fall. `Shift+B`, or double-clicking the tempo, goes back to the one found in
 the drums.
 
+Above the waveforms, Stems marks the song's sections: intro, verses,
+choruses, bridge, instrumental breaks and outro. Click one to play from
+there, or press `Ctrl+←` and `Ctrl+→` to go to the previous or next section;
+with Count-in on, it counts you in. The sections come from the stems
+themselves: where the chords, the vocal melody and each stem's loudness
+change, and which passages come back. Whether the vocals are singing tells
+the verses and choruses from the intro, solos and outro. It takes about a
+second, in the background, after a song opens. The names are a best guess:
+a verse and chorus over the same chords can read as one section.
+
 Each song remembers its mix. The pitch, a tapped tempo, and every stem's
 mute, solo and volume are saved to `mix.json` in the song's stems folder as
 you change them, and come back the next time you open the song.

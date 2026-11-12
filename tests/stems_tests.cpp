@@ -14,6 +14,7 @@
 #include "pitchshifter.h"
 #include "separator.h"
 #include "singleinstance.h"
+#include "structure.h"
 #include "tempo.h"
 #include "theme.h"
 #include "translator.h"
@@ -526,6 +527,70 @@ mkdir -p "$out/$model" && for s in vocals drums bass other; do echo $s > "$out/$
         QCOMPARE(tones.bpm(), 0.0);
     }
 
+    void structureFindsTheSections()
+    {
+        std::vector<std::vector<qint16>> stems;
+        std::vector<std::pair<QString, double>> form;
+        formSong(&stems, &form);
+        const qint64 frames = qint64(stems[0].size() / 2);
+        const Tempo::Grid grid = Tempo::detect({{stems[1].data(), frames}}, frames, Mixer::SampleRate);
+        const QStringList names{"vocals", "drums", "bass", "other"};
+        std::vector<Structure::Stem> input;
+        for (int i = 0; i < 4; ++i)
+            input.push_back({names[i], stems[size_t(i)].data(), frames});
+        const std::vector<Structure::Section> sections = Structure::analyse(input, frames, Mixer::SampleRate, grid.beats);
+
+        QCOMPARE(sections.size(), form.size());
+        for (size_t i = 0; i < form.size(); ++i) {
+            QCOMPARE(sections[i].kind, form[i].first);
+            // On the beat where the section starts, give or take one.
+            QVERIFY2(std::abs(sections[i].start - form[i].second) <= 0.5, qPrintable(QString::number(sections[i].start)));
+        }
+        // Each verse is the same part, and each chorus.
+        QCOMPARE(sections[1].group, sections[3].group);
+        QCOMPARE(sections[2].group, sections[4].group);
+        QCOMPARE(sections[2].group, sections[6].group);
+        QVERIFY(sections[1].group != sections[2].group);
+
+        // Too short to divide.
+        QVERIFY(Structure::analyse(input, Mixer::SampleRate * 10, Mixer::SampleRate, grid.beats).empty());
+    }
+
+    void mixerFindsSectionsAndMovesBetweenThem()
+    {
+        QTemporaryDir dir;
+        std::vector<std::vector<qint16>> stems;
+        std::vector<std::pair<QString, double>> form;
+        formSong(&stems, &form);
+        QDir().mkpath(dir.filePath("song"));
+        const QStringList names{"vocals", "drums", "bass", "other"};
+        for (int i = 0; i < 4; ++i)
+            writeWav(dir.filePath("song/" + names[i] + ".wav"), stems[size_t(i)]);
+        Mixer mixer;
+        QVERIFY(loadTones(dir, mixer, true));
+        // Found in the background.
+        QTRY_VERIFY_WITH_TIMEOUT(!mixer.findingSections(), 10000);
+        QCOMPARE(mixer.sections().size(), qsizetype(form.size()));
+        QCOMPARE(mixer.sections()[2].toMap().value("kind").toString(), QString("chorus"));
+
+        mixer.seek(20);
+        mixer.nextSection();
+        QVERIFY(std::abs(mixer.position() - 32) <= 0.5);
+        mixer.nextSection();
+        QVERIFY(std::abs(mixer.position() - 48) <= 0.5);
+        // Just after a section starts, back goes to the one before; later
+        // in it, to its own start.
+        mixer.previousSection();
+        QVERIFY(std::abs(mixer.position() - 32) <= 0.5);
+        mixer.seek(40);
+        mixer.previousSection();
+        QVERIFY(std::abs(mixer.position() - 32) <= 0.5);
+
+        // Closing the song drops them.
+        mixer.clear();
+        QVERIFY(mixer.sections().isEmpty());
+    }
+
     void backendRestoresTheMixOnOpen()
     {
         QTemporaryDir dir;
@@ -955,6 +1020,71 @@ echo "stems-file:$folder/Fake Song.opus"
         for (size_t i = 0; i < mix.size(); ++i)
             stereo[2 * i] = stereo[2 * i + 1] = qint16(std::clamp(mix[i] * 16000.f, -32768.f, 32767.f));
         return stereo;
+    }
+
+    // A 128-second song in a known form, as vocals, drums, bass and other:
+    // eight bars each of intro, verse, chorus, verse, chorus, bridge,
+    // chorus and outro at 120 BPM. Each kind has its own chords and tune;
+    // the intro and outro have no singing.
+    static void formSong(std::vector<std::vector<qint16>> *out, std::vector<std::pair<QString, double>> *form)
+    {
+        const int rate = Mixer::SampleRate;
+        const double beat = 0.5, bar = 4 * beat;
+        struct Plan {
+            QString kind;
+            std::vector<int> chords, tune;
+            double level;
+        };
+        const std::vector<int> verseChords{57, 53, 48, 55}, chorusChords{50, 52, 59, 54}, bridgeChords{58, 60, 51, 53};
+        const std::vector<int> verseTune{69, 69, 67, 64, 65, 65, 64, 62, 64, 64, 62, 60, 62, 62, 64, 67};
+        const std::vector<int> chorusTune{72, 74, 76, 74, 72, 72, 74, 76, 79, 77, 76, 74, 72, 74, 72, 69};
+        const std::vector<int> bridgeTune{62, 65, 69, 72, 71, 69, 67, 65, 64, 67, 71, 74, 72, 71, 69, 67};
+        const std::vector<Plan> plans{{"intro", verseChords, {}, 0.6},       {"verse", verseChords, verseTune, 0.8},
+                                      {"chorus", chorusChords, chorusTune, 1}, {"verse", verseChords, verseTune, 0.8},
+                                      {"chorus", chorusChords, chorusTune, 1}, {"bridge", bridgeChords, bridgeTune, 0.8},
+                                      {"chorus", chorusChords, chorusTune, 1}, {"outro", chorusChords, {}, 0.5}};
+        const int bars = 8;
+        std::vector<std::vector<float>> mix(4, std::vector<float>(size_t(double(plans.size() * bars) * bar * rate), 0.f));
+        auto hz = [](int midi) { return 440.0 * std::pow(2.0, (midi - 69) / 12.0); };
+        auto tone = [&](std::vector<float> &into, double at, double length, double f, double level, bool pluck) {
+            const size_t from = size_t(at * rate);
+            for (size_t i = 0; i < size_t(length * rate) && from + i < into.size(); ++i) {
+                const double t = double(i) / rate;
+                const double envelope = pluck ? std::exp(-t * 3) : std::min(1.0, std::min(t, length - t) * 40);
+                into[from + i] += float(level * envelope * (std::sin(2 * M_PI * f * t) + 0.3 * std::sin(4 * M_PI * f * t)));
+            }
+        };
+        quint32 noise = 7;
+        auto random = [&] { noise = noise * 1664525u + 1013904223u; return double(noise) / 2147483648.0 - 1; };
+        double at = 0;
+        for (const auto &plan : plans) {
+            form->push_back({plan.kind, at});
+            for (int b = 0; b < bars; ++b) {
+                const double barAt = at + b * bar;
+                const int root = plan.chords[size_t(b) % plan.chords.size()];
+                for (int step : {0, 3, 7})
+                    tone(mix[3], barAt, bar, hz(root + step + (step == 3 && root % 2 ? 1 : 0)), 0.12 * plan.level, false);
+                for (int q = 0; q < 4; ++q) {
+                    tone(mix[2], barAt + q * beat, beat * 0.9, hz(root - 12), 0.35 * plan.level, true);
+                    if (!plan.tune.empty())
+                        tone(mix[0], barAt + q * beat, beat * 0.95, hz(plan.tune[size_t(b * 4 + q) % plan.tune.size()]),
+                             0.3 * plan.level, false);
+                    const size_t from = size_t((barAt + q * beat) * rate);
+                    for (size_t i = 0; i < size_t(rate / 5) && from + i < mix[1].size(); ++i) {
+                        const double t = double(i) / rate;
+                        mix[1][from + i] += float(plan.level * (q % 2 ? 0.5 * random() * std::exp(-t * 20)
+                                                                     : std::sin(2 * M_PI * (50 + 80 * std::exp(-t * 30)) * t) * std::exp(-t * 8)));
+                    }
+                }
+            }
+            at += bars * bar;
+        }
+        for (const auto &stem : mix) {
+            std::vector<qint16> stereo(stem.size() * 2);
+            for (size_t i = 0; i < stem.size(); ++i)
+                stereo[2 * i] = stereo[2 * i + 1] = qint16(std::clamp(stem[i] * 16000.f, -32768.f, 32767.f));
+            out->push_back(stereo);
+        }
     }
 
     static void writeWav(const QString &path, const std::vector<qint16> &stereo)

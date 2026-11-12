@@ -2,13 +2,16 @@
 
 #include <QAudioFormat>
 #include <QAudioSink>
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QFileInfo>
 #include <QMediaDevices>
+#include <QPointer>
 #include <QProcess>
+#include <QThreadPool>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QtEndian>
@@ -16,6 +19,7 @@
 #include <cmath>
 
 #include "pitchshifter.h"
+#include "structure.h"
 
 namespace {
 constexpr int BytesPerFrame = Mixer::Channels * int(sizeof(qint16));
@@ -341,6 +345,7 @@ void Mixer::finishLoad() {
     }
     detectTempo();
     endResetModel();
+    findSections();
     m_selected = 0;
     emit selectedChanged();
     emit loadingChanged();
@@ -369,6 +374,79 @@ void Mixer::detectTempo() {
     m_tapAnchor = qQNaN();
     m_tapTimes.clear();
     m_tapPositions.clear();
+}
+
+// About a second of work for a four-minute song, so it runs off the UI
+// thread. The stems' PCM is shared, not copied: the worker's references
+// keep it alive even if the song is closed meanwhile.
+void Mixer::findSections() {
+    const int generation = ++m_sectionsGeneration;
+    std::vector<QByteArray> pcm;
+    QStringList names;
+    for (const auto &track : m_tracks) {
+        pcm.push_back(track.pcm);
+        names << track.name;
+    }
+    const std::vector<double> beats = m_detected.beats;
+    const qint64 frames = m_frames;
+    m_findingSections = true;
+    m_sections.clear();
+    emit sectionsChanged();
+
+    QPointer<Mixer> guard(this);
+    QThreadPool::globalInstance()->start([guard, generation, pcm, names, beats, frames] {
+        std::vector<Structure::Stem> stems;
+        for (size_t i = 0; i < pcm.size(); ++i)
+            stems.push_back({names[int(i)], reinterpret_cast<const qint16 *>(pcm[i].constData()),
+                             pcm[i].size() / BytesPerFrame});
+        const std::vector<Structure::Section> found = Structure::analyse(stems, frames, SampleRate, beats);
+        QVariantList sections;
+        for (const auto &section : found)
+            sections << QVariantMap{{"start", section.start}, {"end", section.end},
+                                    {"kind", section.kind}, {"group", section.group}};
+        QMetaObject::invokeMethod(qApp, [guard, generation, sections] {
+            if (!guard || guard->m_sectionsGeneration != generation)
+                return;
+            guard->m_sections = sections;
+            guard->m_findingSections = false;
+            emit guard->sectionsChanged();
+        }, Qt::QueuedConnection);
+    });
+}
+
+void Mixer::jumpTo(double seconds) {
+    if (!loaded())
+        return;
+    if (m_playing && m_countIn) {
+        pause();
+        seek(seconds);
+        play();
+    } else {
+        seek(seconds);
+    }
+}
+
+void Mixer::nextSection() {
+    const double now = position();
+    for (const QVariant &section : std::as_const(m_sections)) {
+        const double start = section.toMap().value("start").toDouble();
+        if (start > now + 0.05) {
+            jumpTo(start);
+            return;
+        }
+    }
+}
+
+void Mixer::previousSection() {
+    // Two seconds in, back to this section's start; sooner, to the one before.
+    const double now = position();
+    double target = 0;
+    for (const QVariant &section : std::as_const(m_sections)) {
+        const double start = section.toMap().value("start").toDouble();
+        if (start <= now - 2.0)
+            target = start;
+    }
+    jumpTo(target);
 }
 
 void Mixer::clear() {
@@ -400,6 +478,10 @@ void Mixer::clear() {
     m_redo.clear();
     m_detected = {};
     m_firstSound = -1;
+    ++m_sectionsGeneration;
+    const bool hadSections = !m_sections.isEmpty() || m_findingSections;
+    m_sections.clear();
+    m_findingSections = false;
     m_tapBpm = 0;
     m_tapAnchor = qQNaN();
     m_tapTimes.clear();
@@ -412,6 +494,8 @@ void Mixer::clear() {
     emit positionChanged();
     emit historyChanged();
     emit tempoChanged();
+    if (hadSections)
+        emit sectionsChanged();
 }
 
 bool Mixer::ensureSink() {
@@ -484,17 +568,6 @@ void Mixer::pause() {
     m_ticker.stop();
     updatePosition();
     emit playingChanged();
-}
-
-void Mixer::toStart() {
-    // Playing with a count-in, going back counts in again.
-    if (m_playing && m_countIn) {
-        pause();
-        seek(0);
-        play();
-    } else {
-        seek(0);
-    }
 }
 
 void Mixer::togglePlay() {

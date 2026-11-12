@@ -41,6 +41,10 @@ class Mixer : public QAbstractListModel {
     Q_PROPERTY(int countInBeats READ countInBeats WRITE setCountInBeats NOTIFY countInChanged)
     // The click being heard during a count-in, from 1; 0 the rest of the time.
     Q_PROPERTY(int countBeat READ countBeat NOTIFY countBeatChanged)
+    // The song's sections, each {start, end, kind, group}, found in the
+    // background after loading; empty until then, or when none were found.
+    Q_PROPERTY(QVariantList sections READ sections NOTIFY sectionsChanged)
+    Q_PROPERTY(bool findingSections READ findingSections NOTIFY sectionsChanged)
 
 public:
     enum Roles { NameRole = Qt::UserRole + 1, MutedRole, SoloedRole, VolumeRole, AudibleRole, PeaksRole };
@@ -76,6 +80,8 @@ public:
     int countInBeats() const { return m_countInBeats; }
     void setCountInBeats(int beats);
     int countBeat() const { return m_countBeat; }
+    QVariantList sections() const { return m_sections; }
+    bool findingSections() const { return m_findingSections; }
     // The beats the count-in follows: the tapped tempo's, or the drums'.
     std::vector<double> beats() const;
 
@@ -89,7 +95,14 @@ public:
     Q_INVOKABLE void seek(double seconds);
     Q_INVOKABLE void skip(double seconds) { seek(position() + seconds); }
     // Back to the beginning; while playing with a count-in, counts in again.
-    Q_INVOKABLE void toStart();
+    Q_INVOKABLE void toStart() { jumpTo(0); }
+    // Moves the playhead; while playing with a count-in, counts in again
+    // from there.
+    Q_INVOKABLE void jumpTo(double seconds);
+    // To the start of the next section, or of this one (the previous one
+    // when this one has only just begun).
+    Q_INVOKABLE void nextSection();
+    Q_INVOKABLE void previousSection();
 
     Q_INVOKABLE void toggleMute(int row);
     Q_INVOKABLE void toggleSolo(int row);
@@ -142,6 +155,7 @@ signals:
     void tempoChanged();
     void countInChanged();
     void countBeatChanged();
+    void sectionsChanged();
 
 private:
     struct Track {
@@ -175,6 +189,7 @@ private:
     void flushSave();
     void finishLoad();
     void detectTempo();
+    void findSections();
     void scheduleSave();
     void startCountIn();
     void stopCountIn();
@@ -198,6 +213,11 @@ private:
     std::vector<MixState> m_undo, m_redo;
 
     Tempo::Grid m_detected;
+    QVariantList m_sections;
+    bool m_findingSections = false;
+    // Bumped by every load and clear, so a late result for another song is
+    // dropped.
+    int m_sectionsGeneration = 0;
     // Where the first note begins, in seconds; -1 for a silent song.
     double m_firstSound = -1;
     double m_tapBpm = 0;

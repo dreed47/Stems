@@ -170,5 +170,17 @@
   "Tap along to set the tempo": "Tap med for at sætte tempoet",
   "Back to the tempo found in the drums": "Tilbage til tempoet fundet i trommerne",
   "Count in before playing, or not": "Tæl ind før afspilning, eller lad være",
-  "Back to the start (Home)": "Tilbage til starten (Home)"
+  "Back to the start (Home)": "Tilbage til starten (Home)",
+  "Intro": "Intro",
+  "Verse": "Vers",
+  "Pre-chorus": "Pre-omkvæd",
+  "Chorus": "Omkvæd",
+  "Bridge": "Bro",
+  "Instrumental": "Instrumental",
+  "Outro": "Outro",
+  "%1 %2": "%1 %2",
+  "Finding the verses and choruses…": "Finder vers og omkvæd…",
+  "No sections found": "Ingen afsnit fundet",
+  "%1, %2 – %3. Click to play from here (Ctrl+← →).": "%1, %2 – %3. Klik for at spille herfra (Ctrl+← →).",
+  "Previous or next section": "Forrige eller næste afsnit"
 }

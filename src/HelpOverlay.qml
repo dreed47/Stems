@@ -25,6 +25,7 @@ Rectangle {
         ["0", qsTr("Reset the mix and the pitch")],
         ["← →", qsTr("Back or forward 5 seconds")],
         ["Shift+← →", qsTr("Back or forward 30 seconds")],
+        ["Ctrl+← →", qsTr("Previous or next section")],
         ["Home", qsTr("Back to the start")],
         ["B", qsTr("Tap along to set the tempo")],
         ["Shift+B", qsTr("Back to the tempo found in the drums")],

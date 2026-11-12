@@ -172,5 +172,17 @@
   "Tap along to set the tempo": "Taper la pulsation pour fixer le tempo",
   "Back to the tempo found in the drums": "Revenir au tempo de la batterie",
   "Count in before playing, or not": "Décompter avant la lecture, ou non",
-  "Back to the start (Home)": "Revenir au début (Début)"
+  "Back to the start (Home)": "Revenir au début (Début)",
+  "Intro": "Intro",
+  "Verse": "Couplet",
+  "Pre-chorus": "Pré-refrain",
+  "Chorus": "Refrain",
+  "Bridge": "Pont",
+  "Instrumental": "Instrumental",
+  "Outro": "Outro",
+  "%1 %2": "%1 %2",
+  "Finding the verses and choruses…": "Recherche des couplets et refrains…",
+  "No sections found": "Aucune section trouvée",
+  "%1, %2 – %3. Click to play from here (Ctrl+← →).": "%1, %2 – %3. Cliquez pour lire à partir d'ici (Ctrl+← →).",
+  "Previous or next section": "Section précédente ou suivante"
 }

@@ -34,6 +34,47 @@ ApplicationWindow {
         return name
     }
 
+    function sectionLabel(kind) {
+        switch (kind) {
+        case "intro": return qsTr("Intro")
+        case "verse": return qsTr("Verse")
+        case "prechorus": return qsTr("Pre-chorus")
+        case "chorus": return qsTr("Chorus")
+        case "bridge": return qsTr("Bridge")
+        case "instrumental": return qsTr("Instrumental")
+        case "outro": return qsTr("Outro")
+        }
+        return kind
+    }
+
+    // "Verse 2" when there's more than one verse.
+    function sectionName(index) {
+        const list = mixer.sections
+        const kind = list[index].kind
+        let nth = 0, total = 0
+        for (let k = 0; k < list.length; ++k) {
+            if (list[k].kind === kind) {
+                ++total
+                if (k <= index)
+                    ++nth
+            }
+        }
+        return total > 1 ? qsTr("%1 %2").arg(sectionLabel(kind)).arg(nth.toLocaleString(Qt.locale(), "f", 0))
+                         : sectionLabel(kind)
+    }
+
+    // Fixed hues, so a chorus looks like a chorus whatever the theme.
+    function sectionColor(kind) {
+        switch (kind) {
+        case "verse": return "#5b8def"
+        case "prechorus": return "#3fb8af"
+        case "chorus": return "#f0a830"
+        case "bridge": return "#b07cf0"
+        case "instrumental": return "#5cbf6a"
+        }
+        return "#8a8a93"
+    }
+
     function clock(seconds) {
         translator.language
         const total = Math.max(0, Math.floor(seconds))
@@ -96,6 +137,8 @@ ApplicationWindow {
     Shortcut { sequence: "Right"; context: Qt.ApplicationShortcut; onActivated: mixer.skip(5) }
     Shortcut { sequence: "Shift+Left"; context: Qt.ApplicationShortcut; onActivated: mixer.skip(-30) }
     Shortcut { sequence: "Shift+Right"; context: Qt.ApplicationShortcut; onActivated: mixer.skip(30) }
+    Shortcut { sequence: "Ctrl+Left"; context: Qt.ApplicationShortcut; onActivated: mixer.previousSection() }
+    Shortcut { sequence: "Ctrl+Right"; context: Qt.ApplicationShortcut; onActivated: mixer.nextSection() }
     Shortcut { sequence: "Home"; context: Qt.ApplicationShortcut; onActivated: mixer.toStart() }
     Shortcut { sequence: "B"; context: Qt.ApplicationShortcut; autoRepeat: false; onActivated: mixer.tap() }
     Shortcut { sequence: "Shift+B"; context: Qt.ApplicationShortcut; onActivated: mixer.clearTap() }
@@ -364,11 +407,76 @@ ApplicationWindow {
                     }
                 }
 
+                // The song's sections, lined up over the waveforms they
+                // divide (each row's waveform starts 258 px in and ends
+                // 10 px short of its right edge).
+                Item {
+                    id: sectionStrip
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.leftMargin: 16 + 258
+                    anchors.rightMargin: 16 + 10
+                    anchors.topMargin: 12
+                    height: 26
+                    visible: mixer.loaded
+
+                    Label {
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: mixer.sections.length === 0
+                        text: mixer.findingSections ? qsTr("Finding the verses and choruses…") : qsTr("No sections found")
+                        color: win.dim
+                        font.pixelSize: 12
+                    }
+
+                    Repeater {
+                        model: mixer.sections
+                        delegate: Rectangle {
+                            id: section
+                            required property var modelData
+                            required property int index
+                            readonly property bool current: mixer.position >= modelData.start && mixer.position < modelData.end
+                            readonly property color hue: win.sectionColor(modelData.kind)
+                            x: modelData.start / Math.max(0.01, mixer.duration) * sectionStrip.width
+                            width: Math.max(2, (modelData.end - modelData.start) / Math.max(0.01, mixer.duration) * sectionStrip.width - 2)
+                            height: sectionStrip.height
+                            radius: Math.min(4, theme.radius)
+                            color: Qt.rgba(hue.r, hue.g, hue.b, current ? 0.5 : sectionHover.hovered ? 0.36 : 0.24)
+                            border.width: current ? 1 : 0
+                            border.color: hue
+
+                            Label {
+                                anchors.fill: parent
+                                anchors.leftMargin: 6
+                                anchors.rightMargin: 4
+                                verticalAlignment: Text.AlignVCenter
+                                text: win.sectionName(section.index)
+                                elide: Text.ElideRight
+                                font.pixelSize: 12
+                                font.weight: section.current ? Font.DemiBold : Font.Normal
+                                color: "#e6e6ea"
+                            }
+                            HoverHandler { id: sectionHover; cursorShape: Qt.PointingHandCursor }
+                            TapHandler { onTapped: mixer.jumpTo(section.modelData.start) }
+                            ToolTip.visible: sectionHover.hovered
+                            ToolTip.delay: 400
+                            ToolTip.text: qsTr("%1, %2 – %3. Click to play from here (Ctrl+← →).")
+                                              .arg(win.sectionName(section.index))
+                                              .arg(win.clock(section.modelData.start))
+                                              .arg(win.clock(section.modelData.end))
+                        }
+                    }
+                }
+
                 // The mixer: one row per stem.
                 ListView {
                     id: tracks
-                    anchors.fill: parent
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.top: sectionStrip.bottom
                     anchors.margins: 16
+                    anchors.topMargin: 8
                     visible: mixer.loaded
                     model: mixer
                     spacing: 8
