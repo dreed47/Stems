@@ -21,9 +21,21 @@ as a half step (100 cents) without changing the tempo, using
 recording or an instrument you're playing along on. What you hear, pitch
 included, can be exported as a WAV file.
 
-Each song remembers its mix. The pitch and every stem's mute, solo and volume
-are saved to `mix.json` in the song's stems folder as you change them, and
-come back the next time you open the song.
+Stems finds each song's tempo in its drum stem (or in the whole song when
+there's no drum stem) and shows it in BPM. Turn on **Count-in** (`C`) and
+pressing play counts you in: clicks at the song's tempo, then the song comes
+in on the beat. From the top, the count leads straight into the song's first
+note, whichever stem plays it. Playing from the middle of a song backs up to the nearest beat
+first, and the count follows the tempo where you start, so it keeps up with a
+drummer who speeds up. Choose 2, 4 or 8 clicks in Settings. If the tempo is
+wrong (half or double is the usual mistake) or there are no drums, tap along
+with **Tap** (`B`): taps made while the song plays also set where the beats
+fall. `Shift+B`, or double-clicking the tempo, goes back to the one found in
+the drums.
+
+Each song remembers its mix. The pitch, a tapped tempo, and every stem's
+mute, solo and volume are saved to `mix.json` in the song's stems folder as
+you change them, and come back the next time you open the song.
 
 Stems are saved in `~/Music/Stems/<song>/`, one WAV per instrument, so each
 song is split only once. Opening a song asks for 4 or 6 stems; if it's split

@@ -14,6 +14,7 @@
 #include "pitchshifter.h"
 #include "separator.h"
 #include "singleinstance.h"
+#include "tempo.h"
 #include "theme.h"
 #include "translator.h"
 
@@ -390,6 +391,139 @@ mkdir -p "$out/$model" && for s in vocals drums bass other; do echo $s > "$out/$
         QFile saved(dir.filePath("song/mix.json"));
         QVERIFY(saved.open(QIODevice::ReadOnly));
         QVERIFY(saved.readAll().contains("-35"));
+    }
+
+    void tempoFindsTheBeatInDrums()
+    {
+        for (const double bpm : {90.0, 128.0, 160.0}) {
+            std::vector<double> truth;
+            const std::vector<qint16> pcm = drumLoop(bpm, 40, 2.0, &truth);
+            const Tempo::Grid grid = Tempo::detect({{pcm.data(), qint64(pcm.size() / 2)}}, qint64(pcm.size() / 2), Mixer::SampleRate);
+            QVERIFY2(std::abs(grid.bpm - bpm) < 0.2, qPrintable(QString::number(grid.bpm)));
+            // Every beat lands within 15 ms of a hit, and none are missed.
+            QCOMPARE(grid.beats.size(), truth.size());
+            for (size_t i = 0; i < truth.size(); ++i)
+                QVERIFY2(std::abs(grid.beats[i] - truth[i]) < 0.015, qPrintable(QString::number(grid.beats[i])));
+        }
+    }
+
+    void tempoFindsNoBeatInASteadyTone()
+    {
+        std::vector<qint16> sine(size_t(Mixer::SampleRate) * 20 * 2);
+        for (size_t i = 0; i < sine.size() / 2; ++i)
+            sine[2 * i] = sine[2 * i + 1] = qint16(8000 * std::sin(2 * M_PI * 110 * double(i) / Mixer::SampleRate));
+        QVERIFY(!Tempo::detect({{sine.data(), qint64(sine.size() / 2)}}, qint64(sine.size() / 2), Mixer::SampleRate).valid());
+        std::vector<qint16> silence(size_t(Mixer::SampleRate) * 20 * 2, 0);
+        QVERIFY(!Tempo::detect({{silence.data(), qint64(silence.size() / 2)}}, qint64(silence.size() / 2), Mixer::SampleRate).valid());
+    }
+
+    void tempoTapsAverageOut()
+    {
+        QCOMPARE(Tempo::tappedBpm({}), 0.0);
+        QCOMPARE(Tempo::tappedBpm({1.0}), 0.0);
+        QCOMPARE(Tempo::tappedBpm({0, 0.5}), 120.0);
+        // One late tap only nudges it.
+        QVERIFY(std::abs(Tempo::tappedBpm({0, 0.5, 1.04, 1.5, 2.0}) - 120) < 1.5);
+    }
+
+    void tempoPlansACountIn()
+    {
+        std::vector<double> beats;
+        for (double t = 1.0; t < 20; t += 0.5)
+            beats.push_back(t);
+        auto near = [](double a, double b) { return std::abs(a - b) < 1e-9; };
+
+        // Mid-song, back to the beat at or before the playhead.
+        Tempo::CountIn plan = Tempo::plan(beats, 120, 5.3, 4);
+        QVERIFY(near(plan.start, 5.0) && near(plan.preroll, 2.0) && near(plan.interval, 0.5));
+        // Just short of a beat counts in to that beat.
+        plan = Tempo::plan(beats, 120, 4.95, 4);
+        QVERIFY(near(plan.start, 5.0) && near(plan.preroll, 2.0));
+        // Before the drums come in, the grid carries on backward.
+        plan = Tempo::plan(beats, 120, 0, 2);
+        QVERIFY(near(plan.start, 0) && near(plan.preroll, 1.0));
+        // A beat just before the song starts: the clicks lead into it, and
+        // the song comes in a moment after the last click.
+        for (double &b : beats)
+            b -= 0.3;
+        plan = Tempo::plan(beats, 120, 0, 4);
+        QVERIFY(near(plan.start, 0) && near(plan.preroll, 2.3));
+        // Past the last beat, it carries on forward.
+        plan = Tempo::plan(beats, 120, 30.1, 4);
+        QVERIFY(near(plan.start, 29.7) && near(plan.preroll, 2.0));
+        // A tapped tempo with no beats counts in to the playhead.
+        plan = Tempo::plan({}, 100, 12.5, 4);
+        QVERIFY(near(plan.start, 12.5) && near(plan.preroll, 2.4) && near(plan.interval, 0.6));
+        QVERIFY(!Tempo::plan({}, 0, 12.5, 4).valid());
+
+        // An intro before the drums: the grid carried back from the drums
+        // has a beat in the silence before the first note (-0.3 here), but
+        // the count leads into the note itself, a moment after the start.
+        plan = Tempo::plan(beats, 120, 0, 4, 0.32);
+        QVERIFY(near(plan.start, 0.29) && near(plan.preroll, 2.0 - 0.03) && near(plan.interval, 0.5));
+        // Anywhere in the silence before it, too; past it, back to the grid.
+        plan = Tempo::plan(beats, 120, 0.31, 4, 0.32);
+        QVERIFY(near(plan.start, 0.31) && near(plan.preroll, 2.0 - 0.01));
+        plan = Tempo::plan(beats, 120, 5.3, 4, 0.32);
+        QVERIFY(near(plan.start, 5.2) && near(plan.preroll, 2.0));
+    }
+
+    void tempoFindsTheFirstNote()
+    {
+        std::vector<qint16> quiet(size_t(Mixer::SampleRate) * 2, 0), late(size_t(Mixer::SampleRate) * 2, 0);
+        // Demucs bleed stays below the line; a note at 0.5 s doesn't.
+        for (size_t i = 0; i < quiet.size(); ++i)
+            quiet[i] = qint16(i % 7 * 40 - 120);
+        for (size_t f = size_t(Mixer::SampleRate / 2); f < late.size() / 2; ++f)
+            late[2 * f] = late[2 * f + 1] = 6000;
+        const qint64 frames = Mixer::SampleRate;
+        QVERIFY(std::abs(Tempo::firstSound({{quiet.data(), frames}, {late.data(), frames}}, Mixer::SampleRate) - 0.495) < 1e-3);
+        QCOMPARE(Tempo::firstSound({{quiet.data(), frames}}, Mixer::SampleRate), -1.0);
+    }
+
+    void mixerFindsTempoAndKeepsTaps()
+    {
+        QTemporaryDir dir;
+        QVERIFY(makeTones(dir));
+        // Replace the drums tone with a drum loop.
+        const std::vector<qint16> loop = drumLoop(120, 12, 0.5);
+        writeWav(dir.filePath("song/drums.wav"), loop);
+        {
+            Mixer mixer;
+            mixer.setAutosave(true);
+            QVERIFY(loadTones(dir, mixer, true));
+            QVERIFY2(std::abs(mixer.bpm() - 120) < 0.2, qPrintable(QString::number(mixer.bpm())));
+            QVERIFY(!mixer.tempoTapped());
+            QVERIFY(mixer.beats().size() > 15);
+
+            QSignalSpy changed(&mixer, &Mixer::tempoChanged);
+            mixer.tap();
+            QVERIFY(!mixer.tempoTapped());
+            QTest::qWait(400);
+            mixer.tap();
+            QTest::qWait(400);
+            mixer.tap();
+            QVERIFY(mixer.tempoTapped());
+            QVERIFY2(std::abs(mixer.bpm() - 150) < 15, qPrintable(QString::number(mixer.bpm())));
+            QCOMPARE(changed.count(), 2);
+            // Tapped while stopped, so there's no beat grid, just a tempo.
+            QVERIFY(mixer.beats().empty());
+            QTRY_VERIFY(QFileInfo::exists(dir.filePath("song/mix.json")));
+        }
+        Mixer mixer;
+        QVERIFY(loadTones(dir, mixer, true));
+        QVERIFY(mixer.restoreSettings());
+        QVERIFY(mixer.tempoTapped());
+        QVERIFY(std::abs(mixer.bpm() - 150) < 15);
+        mixer.clearTap();
+        QVERIFY(!mixer.tempoTapped());
+        QVERIFY(std::abs(mixer.bpm() - 120) < 0.2);
+
+        // The tones alone have no pulse.
+        QTemporaryDir plain;
+        Mixer tones;
+        QVERIFY(loadTones(plain, tones));
+        QCOMPARE(tones.bpm(), 0.0);
     }
 
     void backendRestoresTheMixOnOpen()
@@ -788,6 +922,59 @@ echo "stems-file:$folder/Fake Song.opus"
             if (std::abs(hz - expected) / expected < 0.005)
                 return expected;
         return hz;
+    }
+
+    // A drum loop: kick and snare on alternate beats, hats on the eighths,
+    // starting after `intro` seconds of silence; `truth` gets the beats.
+    static std::vector<qint16> drumLoop(double bpm, double seconds, double intro, std::vector<double> *truth = nullptr)
+    {
+        const int rate = Mixer::SampleRate;
+        std::vector<float> mix(size_t(seconds * rate), 0.f);
+        quint32 noise = 1;
+        auto random = [&] { noise = noise * 1664525u + 1013904223u; return double(noise) / 2147483648.0 - 1; };
+        auto hit = [&](double at, int kind, double level) {
+            const size_t from = size_t(at * rate);
+            for (size_t i = 0; i < size_t(rate / 4) && from + i < mix.size(); ++i) {
+                const double t = double(i) / rate;
+                const double v = kind == 0 ? std::sin(2 * M_PI * (50 + 80 * std::exp(-t * 30)) * t) * std::exp(-t * 8)
+                               : kind == 1 ? (0.6 * random() + 0.4 * std::sin(2 * M_PI * 190 * t)) * std::exp(-t * 18)
+                                           : 0.4 * random() * std::exp(-t * 60);
+                mix[from + i] += float(v * level);
+            }
+        };
+        const double interval = 60 / bpm;
+        for (int beat = 0; intro + beat * interval < seconds - 0.3; ++beat) {
+            const double at = intro + beat * interval;
+            if (truth)
+                truth->push_back(at);
+            hit(at, beat % 2, 0.8);
+            hit(at, 2, 0.5);
+            hit(at + interval / 2, 2, 0.35);
+        }
+        std::vector<qint16> stereo(mix.size() * 2);
+        for (size_t i = 0; i < mix.size(); ++i)
+            stereo[2 * i] = stereo[2 * i + 1] = qint16(std::clamp(mix[i] * 16000.f, -32768.f, 32767.f));
+        return stereo;
+    }
+
+    static void writeWav(const QString &path, const std::vector<qint16> &stereo)
+    {
+        const quint32 bytes = quint32(stereo.size() * 2);
+        QByteArray wav(44, 0);
+        memcpy(wav.data(), "RIFF", 4);
+        qToLittleEndian<quint32>(36 + bytes, wav.data() + 4);
+        memcpy(wav.data() + 8, "WAVEfmt ", 8);
+        qToLittleEndian<quint32>(16, wav.data() + 16);
+        qToLittleEndian<quint16>(1, wav.data() + 20);
+        qToLittleEndian<quint16>(2, wav.data() + 22);
+        qToLittleEndian<quint32>(Mixer::SampleRate, wav.data() + 24);
+        qToLittleEndian<quint32>(Mixer::SampleRate * 4, wav.data() + 28);
+        qToLittleEndian<quint16>(4, wav.data() + 32);
+        qToLittleEndian<quint16>(16, wav.data() + 34);
+        memcpy(wav.data() + 36, "data", 4);
+        qToLittleEndian<quint32>(bytes, wav.data() + 40);
+        wav.append(reinterpret_cast<const char *>(stereo.data()), qsizetype(bytes));
+        write(path, wav);
     }
 
     static void write(const QString &path, const QByteArray &contents)

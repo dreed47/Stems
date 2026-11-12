@@ -1,13 +1,17 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QElapsedTimer>
 #include <QIODevice>
 #include <QMutex>
 #include <QTimer>
 #include <QVariantList>
 #include <atomic>
+#include <limits>
 #include <memory>
 #include <vector>
+
+#include "tempo.h"
 
 class QAudioSink;
 class QProcess;
@@ -30,6 +34,13 @@ class Mixer : public QAbstractListModel {
     Q_PROPERTY(bool canRedo READ canRedo NOTIFY historyChanged)
     Q_PROPERTY(bool anySolo READ anySolo NOTIFY mixChanged)
     Q_PROPERTY(int cents READ cents NOTIFY mixChanged)
+    // Beats per minute, from the drums or from tapping; 0 when unknown.
+    Q_PROPERTY(double bpm READ bpm NOTIFY tempoChanged)
+    Q_PROPERTY(bool tempoTapped READ tempoTapped NOTIFY tempoChanged)
+    Q_PROPERTY(bool countIn READ countIn WRITE setCountIn NOTIFY countInChanged)
+    Q_PROPERTY(int countInBeats READ countInBeats WRITE setCountInBeats NOTIFY countInChanged)
+    // The click being heard during a count-in, from 1; 0 the rest of the time.
+    Q_PROPERTY(int countBeat READ countBeat NOTIFY countBeatChanged)
 
 public:
     enum Roles { NameRole = Qt::UserRole + 1, MutedRole, SoloedRole, VolumeRole, AudibleRole, PeaksRole };
@@ -58,6 +69,15 @@ public:
     bool canRedo() const { return !m_redo.empty(); }
     bool anySolo() const;
     int cents() const { return m_cents; }
+    double bpm() const { return m_tapBpm > 0 ? m_tapBpm : m_detected.bpm; }
+    bool tempoTapped() const { return m_tapBpm > 0; }
+    bool countIn() const { return m_countIn; }
+    void setCountIn(bool on);
+    int countInBeats() const { return m_countInBeats; }
+    void setCountInBeats(int beats);
+    int countBeat() const { return m_countBeat; }
+    // The beats the count-in follows: the tapped tempo's, or the drums'.
+    std::vector<double> beats() const;
 
     // Decodes every stem file with ffmpeg; emits loadFailed or loadedChanged.
     void load(const QStringList &files, const QString &folder, const QString &title);
@@ -79,6 +99,12 @@ public:
     Q_INVOKABLE void resetMix();
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();
+    Q_INVOKABLE void toggleCountIn() { setCountIn(!m_countIn); }
+    // Tap along to set the tempo: two taps give one, more refine it. Taps
+    // made while the song plays also set where its beats fall.
+    Q_INVOKABLE void tap();
+    // Back to the tempo found in the drums.
+    Q_INVOKABLE void clearTap();
 
     // Each song's mix (pitch, and every stem's mute, solo and volume) lives
     // in mix.json in its stems folder. With autosave on, every change is
@@ -111,6 +137,9 @@ signals:
     void mixChanged();
     void audioFailed(const QString &message);
     void saveFailed(const QString &message);
+    void tempoChanged();
+    void countInChanged();
+    void countBeatChanged();
 
 private:
     struct Track {
@@ -143,6 +172,10 @@ private:
     void edited();
     void flushSave();
     void finishLoad();
+    void detectTempo();
+    void scheduleSave();
+    void startCountIn();
+    void stopCountIn();
     void updatePosition();
     bool ensureSink();
 
@@ -162,6 +195,23 @@ private:
     QTimer m_saveTimer;
     std::vector<MixState> m_undo, m_redo;
 
+    Tempo::Grid m_detected;
+    // Where the first note begins, in seconds; -1 for a silent song.
+    double m_firstSound = -1;
+    double m_tapBpm = 0;
+    // Where a beat fell in the song when the taps were made while playing;
+    // NaN when they weren't.
+    double m_tapAnchor = std::numeric_limits<double>::quiet_NaN();
+    QElapsedTimer m_tapClock;
+    std::vector<double> m_tapTimes, m_tapPositions;
+    bool m_countIn = false;
+    int m_countInBeats = 4;
+    // The count-in being heard: it lasts m_countLength frames, and the song
+    // comes in at m_countStart. 0 length when there isn't one.
+    qint64 m_countLength = 0;
+    qint64 m_countStart = 0;
+    int m_countBeat = 0;
+
     // Shared with the audio thread.
     mutable QMutex m_gainLock;
     std::vector<float> m_targetGains;
@@ -170,6 +220,12 @@ private:
     std::atomic<int> m_liveCents{0};
     std::atomic<bool> m_restartShift{false};
     std::atomic<qint64> m_shiftLag{0};
+    // The audio thread plays the count-in's clicks before the song: this
+    // many frames are left, this many done, a click every interval frames.
+    std::atomic<qint64> m_countLeft{0};
+    std::atomic<qint64> m_countDone{0};
+    std::atomic<qint64> m_countInterval{0};
+    std::atomic<int> m_countClicks{0};
 
     std::unique_ptr<Stream> m_stream;
     QAudioSink *m_sink = nullptr;

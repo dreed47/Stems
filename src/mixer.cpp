@@ -22,6 +22,11 @@ constexpr int BytesPerFrame = Mixer::Channels * int(sizeof(qint16));
 // Mute, solo and volume changes fade over this many frames (about 12 ms).
 constexpr int RampFrames = 512;
 constexpr int UndoLimit = 200;
+// Each count-in click rings for this long (60 ms).
+constexpr int ClickFrames = Mixer::SampleRate * 6 / 100;
+// Taps further apart than this start a new tempo.
+constexpr double TapTimeout = 2.0;
+constexpr size_t TapsKept = 8;
 const QString SettingsFile = QStringLiteral("mix.json");
 }
 
@@ -44,9 +49,26 @@ protected:
     qint64 writeData(const char *, qint64) override { return -1; }
 
     qint64 readData(char *data, qint64 maxSize) override {
-        const qint64 frames = maxSize / BytesPerFrame;
+        qint64 frames = maxSize / BytesPerFrame;
         if (frames <= 0)
             return 0;
+        const qint64 total = frames;
+        auto *out = reinterpret_cast<qint16 *>(data);
+
+        // A count-in's clicks come before the song, and around the pitch
+        // shifter, which only ever sees the song.
+        qint64 left = m_mixer->m_countLeft.load();
+        if (left > 0) {
+            const qint64 count = qMin(left, frames);
+            renderClicks(out, m_mixer->m_countDone.load(), count);
+            if (m_mixer->m_countLeft.compare_exchange_strong(left, left - count))
+                m_mixer->m_countDone += count;
+            if (count == frames)
+                return total * BytesPerFrame;
+            out += count * Channels;
+            frames -= count;
+        }
+
         std::vector<float> targets;
         {
             QMutexLocker lock(&m_mixer->m_gainLock);
@@ -55,7 +77,6 @@ protected:
         if (m_gains.size() != targets.size())
             m_gains = targets;
 
-        auto *out = reinterpret_cast<qint16 *>(data);
         const int cents = m_mixer->m_liveCents.load();
         const bool restart = m_mixer->m_restartShift.exchange(false);
         qint64 from = m_mixer->m_frame.load();
@@ -99,10 +120,29 @@ protected:
         m_mixer->m_frame.compare_exchange_strong(from, cursor);
         if (written < frames)
             m_mixer->m_ended = true;
-        return frames * BytesPerFrame;
+        return total * BytesPerFrame;
     }
 
 private:
+    // A short decaying tone on each beat of the count-in, higher on the
+    // first beat of every bar.
+    void renderClicks(qint16 *out, qint64 done, qint64 count) const {
+        const qint64 interval = m_mixer->m_countInterval.load();
+        const int clicks = m_mixer->m_countClicks.load();
+        for (qint64 i = 0; i < count; ++i) {
+            const qint64 at = done + i;
+            const qint64 beat = interval > 0 ? at / interval : clicks;
+            const qint64 phase = at - beat * interval;
+            double v = 0;
+            if (beat < clicks && phase < ClickFrames) {
+                const double t = double(phase) / SampleRate;
+                const bool accent = beat % 4 == 0;
+                v = (accent ? 0.7 : 0.5) * std::exp(-t / 0.012) * std::sin(2 * M_PI * (accent ? 1760 : 1320) * t);
+            }
+            out[2 * i] = out[2 * i + 1] = qint16(v * 32767);
+        }
+    }
+
     Mixer *m_mixer;
     std::vector<float> m_gains;
     PitchShifter m_shifter;
@@ -296,6 +336,7 @@ void Mixer::finishLoad() {
         QMutexLocker lock(&m_gainLock);
         m_targetGains = targetGains();
     }
+    detectTempo();
     endResetModel();
     m_selected = 0;
     emit selectedChanged();
@@ -304,6 +345,27 @@ void Mixer::finishLoad() {
     emit positionChanged();
     emit historyChanged();
     emit mixChanged();
+    emit tempoChanged();
+}
+
+// The drums alone, when there's a drum stem with a pulse in it; otherwise
+// the whole song. Either takes a few tens of milliseconds.
+void Mixer::detectTempo() {
+    std::vector<Tempo::Source> drums, everything;
+    for (const auto &track : m_tracks) {
+        const Tempo::Source source{reinterpret_cast<const qint16 *>(track.pcm.constData()), track.pcm.size() / BytesPerFrame};
+        everything.push_back(source);
+        if (track.name == QLatin1String("drums"))
+            drums.push_back(source);
+    }
+    m_detected = drums.empty() ? Tempo::Grid{} : Tempo::detect(drums, m_frames, SampleRate);
+    if (!m_detected.valid())
+        m_detected = Tempo::detect(everything, m_frames, SampleRate);
+    m_firstSound = Tempo::firstSound(everything, SampleRate);
+    m_tapBpm = 0;
+    m_tapAnchor = qQNaN();
+    m_tapTimes.clear();
+    m_tapPositions.clear();
 }
 
 void Mixer::clear() {
@@ -333,12 +395,20 @@ void Mixer::clear() {
     m_title.clear();
     m_undo.clear();
     m_redo.clear();
+    m_detected = {};
+    m_firstSound = -1;
+    m_tapBpm = 0;
+    m_tapAnchor = qQNaN();
+    m_tapTimes.clear();
+    m_tapPositions.clear();
+    stopCountIn();
     endResetModel();
     if (wasLoading)
         emit loadingChanged();
     emit loadedChanged();
     emit positionChanged();
     emit historyChanged();
+    emit tempoChanged();
 }
 
 bool Mixer::ensureSink() {
@@ -383,12 +453,20 @@ void Mixer::play() {
     m_ended = false;
     if (!ensureSink())
         return;
+    // A count-in paused partway carries on; otherwise each play counts in.
+    const bool counting = m_countIn && m_countLength == 0 && bpm() > 0;
+    if (counting)
+        startCountIn();
     m_stream->resetGains();
     m_restartShift = true;
-    if (m_sink->state() == QAudio::SuspendedState)
+    if (m_sink->state() == QAudio::SuspendedState && !counting) {
         m_sink->resume();
-    else
+    } else {
+        // What the sink still holds from before a pause would play ahead
+        // of the clicks.
+        m_sink->stop();
         m_sink->start(m_stream.get());
+    }
     m_playing = true;
     m_ticker.start();
     emit playingChanged();
@@ -412,6 +490,7 @@ void Mixer::togglePlay() {
 void Mixer::seek(double seconds) {
     if (!loaded())
         return;
+    stopCountIn();
     m_frame = qBound<qint64>(0, qint64(seconds * SampleRate), m_frames);
     m_ended = false;
     m_restartShift = true;
@@ -437,12 +516,34 @@ void Mixer::updatePosition() {
             m_sink->stop();
         }
     }
-    qint64 frame = m_frame.load();
-    // What's buffered in the sink hasn't been heard yet.
     // What's buffered in the sink, or still inside the pitch shifter,
     // hasn't been heard yet.
+    const qint64 buffered = m_sink && m_playing ? qMax<qint64>(0, m_sink->bufferSize() - m_sink->bytesFree()) / BytesPerFrame : 0;
+
+    // During a count-in the playhead waits where the song will come in.
+    if (m_countLength > 0) {
+        const qint64 heard = m_countDone.load() - buffered;
+        if (heard < m_countLength || !m_playing) {
+            const qint64 interval = m_countInterval.load();
+            const qint64 beat = heard >= 0 && interval > 0 ? heard / interval : -1;
+            const int shown = beat >= 0 && beat < m_countClicks.load() ? int(beat) + 1 : 0;
+            if (shown != m_countBeat) {
+                m_countBeat = shown;
+                emit countBeatChanged();
+            }
+            const double position = double(m_countStart) / SampleRate;
+            if (position != m_position) {
+                m_position = position;
+                emit positionChanged();
+            }
+            return;
+        }
+        stopCountIn();
+    }
+
+    qint64 frame = m_frame.load();
     if (m_sink && m_playing)
-        frame -= qMax<qint64>(0, m_sink->bufferSize() - m_sink->bytesFree()) / BytesPerFrame + m_shiftLag.load();
+        frame -= buffered + m_shiftLag.load();
     const double position = double(qBound<qint64>(0, frame, m_frames)) / SampleRate;
     if (position != m_position) {
         m_position = position;
@@ -489,8 +590,120 @@ void Mixer::mixUpdated() {
 
 void Mixer::edited() {
     mixUpdated();
+    scheduleSave();
+}
+
+void Mixer::scheduleSave() {
     if (m_autosave && !m_folder.isEmpty())
         m_saveTimer.start();
+}
+
+void Mixer::setCountIn(bool on) {
+    if (on == m_countIn)
+        return;
+    m_countIn = on;
+    emit countInChanged();
+}
+
+void Mixer::setCountInBeats(int beats) {
+    beats = qBound(1, beats, 8);
+    if (beats == m_countInBeats)
+        return;
+    m_countInBeats = beats;
+    emit countInChanged();
+}
+
+std::vector<double> Mixer::beats() const {
+    if (m_tapBpm <= 0)
+        return m_detected.beats;
+    // A tapped tempo is steady: a beat every interval through the song,
+    // lined up with the taps when they were made along with it.
+    std::vector<double> grid;
+    if (std::isnan(m_tapAnchor))
+        return grid;
+    const double interval = 60 / m_tapBpm;
+    for (double t = std::fmod(m_tapAnchor, interval); t < duration(); t += interval)
+        grid.push_back(t);
+    return grid;
+}
+
+// Starts the clicks from where the listener is: after a pause the stream
+// has run ahead of that by whatever the sink had buffered.
+void Mixer::startCountIn() {
+    const double heard = qMin(m_position, double(m_frame.load()) / SampleRate);
+    const Tempo::CountIn plan = Tempo::plan(beats(), bpm(), heard, m_countInBeats, m_firstSound);
+    if (!plan.valid())
+        return;
+    m_countStart = qBound<qint64>(0, qRound64(plan.start * SampleRate), m_frames);
+    m_countLength = qMax<qint64>(1, qRound64(plan.preroll * SampleRate));
+    m_frame = m_countStart;
+    m_shiftLag = 0;
+    m_countInterval = qRound64(plan.interval * SampleRate);
+    m_countClicks = m_countInBeats;
+    m_countDone = 0;
+    m_countLeft = m_countLength;
+    m_position = double(m_countStart) / SampleRate;
+    emit positionChanged();
+}
+
+void Mixer::stopCountIn() {
+    m_countLeft = 0;
+    m_countLength = 0;
+    m_countDone = 0;
+    if (m_countBeat != 0) {
+        m_countBeat = 0;
+        emit countBeatChanged();
+    }
+}
+
+void Mixer::tap() {
+    if (!loaded())
+        return;
+    if (!m_tapClock.isValid())
+        m_tapClock.start();
+    const double now = double(m_tapClock.nsecsElapsed()) / 1e9;
+    if (!m_tapTimes.empty() && now - m_tapTimes.back() > TapTimeout) {
+        m_tapTimes.clear();
+        m_tapPositions.clear();
+    }
+    updatePosition();
+    m_tapTimes.push_back(now);
+    m_tapPositions.push_back(m_playing && m_countLength == 0 ? m_position : qQNaN());
+    if (m_tapTimes.size() > TapsKept) {
+        m_tapTimes.erase(m_tapTimes.begin());
+        m_tapPositions.erase(m_tapPositions.begin());
+    }
+    const double bpm = Tempo::tappedBpm(m_tapTimes);
+    if (bpm <= 0)
+        return;
+    m_tapBpm = bpm;
+
+    // Taps made while the song played without a seek in between say where
+    // its beats fall: average where each tap puts the latest beat.
+    m_tapAnchor = qQNaN();
+    const double interval = 60 / bpm;
+    const size_t n = m_tapPositions.size();
+    const bool along = std::none_of(m_tapPositions.begin(), m_tapPositions.end(), [](double p) { return std::isnan(p); })
+        && std::abs((m_tapPositions.back() - m_tapPositions.front()) - (m_tapTimes.back() - m_tapTimes.front())) < 0.1;
+    if (along) {
+        double anchor = 0;
+        for (size_t i = 0; i < n; ++i)
+            anchor += (m_tapPositions[i] + double(n - 1 - i) * interval) / double(n);
+        m_tapAnchor = anchor;
+    }
+    emit tempoChanged();
+    scheduleSave();
+}
+
+void Mixer::clearTap() {
+    m_tapTimes.clear();
+    m_tapPositions.clear();
+    if (m_tapBpm <= 0)
+        return;
+    m_tapBpm = 0;
+    m_tapAnchor = qQNaN();
+    emit tempoChanged();
+    scheduleSave();
 }
 
 void Mixer::flushSave() {
@@ -592,7 +805,13 @@ bool Mixer::restoreSettings() {
         track.soloed = saved.value("soloed").toBool(false);
         track.volume = qBound(0.0, saved.value("volume").toDouble(1.0), 1.0);
     }
+    // A tapped tempo, when there is one, wins over the drums'.
+    const QJsonObject tempo = root.value("tempo").toObject();
+    const double tapped = tempo.value("bpm").toDouble(0);
+    m_tapBpm = tapped >= 20 && tapped <= 400 ? tapped : 0;
+    m_tapAnchor = tempo.value("anchor").isDouble() ? tempo.value("anchor").toDouble() : qQNaN();
     mixUpdated();
+    emit tempoChanged();
     return true;
 }
 
@@ -602,7 +821,10 @@ QString Mixer::saveSettings() const {
     QJsonObject stems;
     for (const auto &track : m_tracks)
         stems.insert(track.name, QJsonObject{{"muted", track.muted}, {"soloed", track.soloed}, {"volume", track.volume}});
-    const QJsonObject root{{"version", 1}, {"cents", m_cents}, {"stems", stems}};
+    QJsonObject root{{"version", 1}, {"cents", m_cents}, {"stems", stems}};
+    if (m_tapBpm > 0)
+        root.insert("tempo", QJsonObject{{"bpm", m_tapBpm},
+                                         {"anchor", std::isnan(m_tapAnchor) ? QJsonValue() : QJsonValue(m_tapAnchor)}});
     QSaveFile file(settingsPath());
     if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(root).toJson()) < 0 || !file.commit())
         return tr("Could not save this song's mix to %1: %2").arg(settingsPath(), file.errorString());

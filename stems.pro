@@ -14,6 +14,7 @@ HEADERS += \
     src/pitchshifter.h \
     src/portalfilepicker.h \
     src/separator.h \
+    src/tempo.h \
     src/singleinstance.h \
     src/theme.h \
     src/translator.h
@@ -27,6 +28,7 @@ SOURCES += \
     src/pitchshifter.cpp \
     src/portalfilepicker.cpp \
     src/separator.cpp \
+    src/tempo.cpp \
     src/singleinstance.cpp \
     src/theme.cpp \
     src/translator.cpp

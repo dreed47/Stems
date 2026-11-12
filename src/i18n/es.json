@@ -148,5 +148,28 @@
   "Open %1": "Abrir %1",
   "Vocals, drums, bass and other, or add guitar and piano with 6 stems.": "Voz, batería, bajo y otros, o añade guitarra y piano con 6 pistas.",
   "Settings (,)": "Ajustes (,)",
-  "Split this song again, into 4 or 6 stems": "Separar esta canción de nuevo en 4 o 6 pistas"
+  "Split this song again, into 4 or 6 stems": "Separar esta canción de nuevo en 4 o 6 pistas",
+  "%1 BPM": "%1 BPM",
+  "– BPM": "– BPM",
+  "Tapped tempo. Double-click or press Shift+B to go back to the drums' tempo.": "Tempo marcado a mano. Doble clic o Mayús+B para volver al tempo de la batería.",
+  "Tempo found in the drums. Tap along to change it.": "Tempo detectado en la batería. Marca el pulso para cambiarlo.",
+  "No steady tempo found. Tap along to set one.": "No se encontró un tempo estable. Marca el pulso para fijarlo.",
+  "Tap": "Marcar",
+  "Tap along with the beat to set the tempo (B)": "Marca el pulso para fijar el tempo (B)",
+  "Count-in": "Cuenta",
+  "Click %n beats before the song plays (C)": {
+    "one": "%n clic antes de que suene la canción (C)",
+    "many": "%n clics antes de que suene la canción (C)",
+    "other": "%n clics antes de que suene la canción (C)"
+  },
+  "Counting in needs a tempo: tap one first (C)": "La cuenta necesita un tempo: márcalo primero (C)",
+  "With Count-in on (C), playing starts with clicks at the song's tempo, and the song comes in on the beat.": "Con la cuenta activada (C), la reproducción empieza con clics al tempo de la canción, y la canción entra a tiempo.",
+  "%n beats": {
+    "one": "%n tiempo",
+    "many": "%n tiempos",
+    "other": "%n tiempos"
+  },
+  "Tap along to set the tempo": "Marcar el pulso para fijar el tempo",
+  "Back to the tempo found in the drums": "Volver al tempo de la batería",
+  "Count in before playing, or not": "Contar antes de reproducir, o no"
 }

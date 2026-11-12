@@ -97,6 +97,9 @@ ApplicationWindow {
     Shortcut { sequence: "Shift+Left"; context: Qt.ApplicationShortcut; onActivated: mixer.skip(-30) }
     Shortcut { sequence: "Shift+Right"; context: Qt.ApplicationShortcut; onActivated: mixer.skip(30) }
     Shortcut { sequence: "Home"; context: Qt.ApplicationShortcut; onActivated: mixer.seek(0) }
+    Shortcut { sequence: "B"; context: Qt.ApplicationShortcut; autoRepeat: false; onActivated: mixer.tap() }
+    Shortcut { sequence: "Shift+B"; context: Qt.ApplicationShortcut; onActivated: mixer.clearTap() }
+    Shortcut { sequence: "C"; context: Qt.ApplicationShortcut; onActivated: mixer.toggleCountIn() }
     Shortcut { sequences: [StandardKey.Undo]; context: Qt.ApplicationShortcut; onActivated: mixer.undo() }
     Shortcut { sequences: [StandardKey.Redo, "Ctrl+Shift+Z"]; context: Qt.ApplicationShortcut; onActivated: mixer.redo() }
     Repeater {
@@ -378,6 +381,25 @@ ApplicationWindow {
                         label: win.stemLabel(name)
                     }
                 }
+
+                // The count-in, beat by beat, over the stems.
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 160
+                    height: 160
+                    radius: width / 2
+                    color: Qt.rgba(0.055, 0.055, 0.063, 0.85)
+                    border.width: 3
+                    border.color: theme.accent
+                    visible: mixer.countBeat > 0
+                    Label {
+                        anchors.centerIn: parent
+                        text: mixer.countBeat.toLocaleString(Qt.locale(), "f", 0)
+                        font.pixelSize: 84
+                        font.weight: Font.Bold
+                        color: theme.accent
+                    }
+                }
             }
 
             // Transport.
@@ -389,10 +411,14 @@ ApplicationWindow {
                 Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: win.line }
 
                 RowLayout {
+                    id: transport
+                    // Narrow windows drop the labels and dividers, so the
+                    // scrubber keeps its room.
+                    readonly property bool roomy: width >= 900
                     anchors.fill: parent
                     anchors.leftMargin: 16
                     anchors.rightMargin: 20
-                    spacing: 14
+                    spacing: roomy ? 14 : 8
 
                     AbstractButton {
                         Layout.preferredWidth: 44
@@ -456,10 +482,50 @@ ApplicationWindow {
                         color: theme.accent
                     }
 
-                    ToolSeparator {}
+                    ToolSeparator { visible: transport.roomy }
+
+                    // Tempo, found in the drums or tapped, and the count-in
+                    // that follows it.
+                    Label {
+                        Layout.preferredWidth: 72
+                        horizontalAlignment: Text.AlignHCenter
+                        text: mixer.bpm > 0 ? qsTr("%1 BPM").arg(Math.round(mixer.bpm).toLocaleString(Qt.locale(), "f", 0))
+                                            : qsTr("– BPM")
+                        color: mixer.tempoTapped ? theme.accent : mixer.bpm > 0 ? "#e6e6ea" : win.dim
+                        font.features: { "tnum": 1 }
+                        font.pixelSize: 15
+                        font.weight: mixer.tempoTapped ? Font.DemiBold : Font.Normal
+                        TapHandler { onDoubleTapped: mixer.clearTap() }
+                        HoverHandler { id: tempoHover }
+                        ToolTip.visible: tempoHover.hovered
+                        ToolTip.delay: 600
+                        ToolTip.text: mixer.tempoTapped ? qsTr("Tapped tempo. Double-click or press Shift+B to go back to the drums' tempo.")
+                                    : mixer.bpm > 0 ? qsTr("Tempo found in the drums. Tap along to change it.")
+                                    : qsTr("No steady tempo found. Tap along to set one.")
+                    }
+                    ChipButton {
+                        text: qsTr("Tap")
+                        // On press, not release: that's when the beat is.
+                        onPressed: mixer.tap()
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 600
+                        ToolTip.text: qsTr("Tap along with the beat to set the tempo (B)")
+                    }
+                    ChipButton {
+                        text: qsTr("Count-in")
+                        active: mixer.countIn
+                        onClicked: mixer.toggleCountIn()
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 600
+                        ToolTip.text: mixer.bpm > 0 ? qsTr("Click %n beats before the song plays (C)", "", mixer.countInBeats)
+                                                    : qsTr("Counting in needs a tempo: tap one first (C)")
+                    }
+
+                    ToolSeparator { visible: transport.roomy }
 
                     // Pitch, in cents, up to a half step either way.
                     Label {
+                        visible: transport.roomy
                         text: qsTr("Pitch")
                         color: win.dim
                     }
@@ -735,6 +801,30 @@ ApplicationWindow {
                     flat: true
                     visible: backend.customStemsRoot
                     onClicked: backend.resetStemsRoot()
+                }
+            }
+
+            Label {
+                Layout.topMargin: 12
+                text: qsTr("Count-in")
+                font.weight: Font.DemiBold
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Label.Wrap
+                color: win.dim
+                text: qsTr("With Count-in on (C), playing starts with clicks at the song's tempo, and the song comes in on the beat.")
+            }
+            Row {
+                spacing: 6
+                Repeater {
+                    model: [2, 4, 8]
+                    delegate: ChipButton {
+                        required property int modelData
+                        active: mixer.countInBeats === modelData
+                        text: qsTr("%n beats", "", modelData)
+                        onClicked: mixer.countInBeats = modelData
+                    }
                 }
             }
 

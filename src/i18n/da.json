@@ -148,5 +148,26 @@
   "Open %1": "Åbn %1",
   "Vocals, drums, bass and other, or add guitar and piano with 6 stems.": "Vokal, trommer, bas og andet, eller tilføj guitar og klaver med 6 spor.",
   "Settings (,)": "Indstillinger (,)",
-  "Split this song again, into 4 or 6 stems": "Del sangen op igen i 4 eller 6 spor"
+  "Split this song again, into 4 or 6 stems": "Del sangen op igen i 4 eller 6 spor",
+  "%1 BPM": "%1 BPM",
+  "– BPM": "– BPM",
+  "Tapped tempo. Double-click or press Shift+B to go back to the drums' tempo.": "Tappet tempo. Dobbeltklik eller tryk Shift+B for at gå tilbage til trommernes tempo.",
+  "Tempo found in the drums. Tap along to change it.": "Tempo fundet i trommerne. Tap med for at ændre det.",
+  "No steady tempo found. Tap along to set one.": "Intet stabilt tempo fundet. Tap med for at sætte et.",
+  "Tap": "Tap",
+  "Tap along with the beat to set the tempo (B)": "Tap med i takt for at sætte tempoet (B)",
+  "Count-in": "Indtælling",
+  "Click %n beats before the song plays (C)": {
+    "one": "%n klik før sangen spiller (C)",
+    "other": "%n klik før sangen spiller (C)"
+  },
+  "Counting in needs a tempo: tap one first (C)": "Indtælling kræver et tempo: tap et først (C)",
+  "With Count-in on (C), playing starts with clicks at the song's tempo, and the song comes in on the beat.": "Med indtælling slået til (C) starter afspilningen med klik i sangens tempo, og sangen kommer ind på slaget.",
+  "%n beats": {
+    "one": "%n slag",
+    "other": "%n slag"
+  },
+  "Tap along to set the tempo": "Tap med for at sætte tempoet",
+  "Back to the tempo found in the drums": "Tilbage til tempoet fundet i trommerne",
+  "Count in before playing, or not": "Tæl ind før afspilning, eller lad være"
 }

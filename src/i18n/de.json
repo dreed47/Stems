@@ -148,5 +148,26 @@
   "Open %1": "%1 öffnen",
   "Vocals, drums, bass and other, or add guitar and piano with 6 stems.": "Gesang, Schlagzeug, Bass und Rest, oder mit 6 Spuren dazu Gitarre und Klavier.",
   "Settings (,)": "Einstellungen (,)",
-  "Split this song again, into 4 or 6 stems": "Diesen Song neu in 4 oder 6 Spuren aufteilen"
+  "Split this song again, into 4 or 6 stems": "Diesen Song neu in 4 oder 6 Spuren aufteilen",
+  "%1 BPM": "%1 BPM",
+  "– BPM": "– BPM",
+  "Tapped tempo. Double-click or press Shift+B to go back to the drums' tempo.": "Getipptes Tempo. Doppelklick oder Umschalt+B für das Tempo des Schlagzeugs.",
+  "Tempo found in the drums. Tap along to change it.": "Tempo aus dem Schlagzeug. Zum Ändern im Takt mittippen.",
+  "No steady tempo found. Tap along to set one.": "Kein gleichmäßiges Tempo gefunden. Zum Festlegen im Takt mittippen.",
+  "Tap": "Tippen",
+  "Tap along with the beat to set the tempo (B)": "Im Takt mittippen, um das Tempo festzulegen (B)",
+  "Count-in": "Einzählen",
+  "Click %n beats before the song plays (C)": {
+    "one": "%n Klick, bevor der Song spielt (C)",
+    "other": "%n Klicks, bevor der Song spielt (C)"
+  },
+  "Counting in needs a tempo: tap one first (C)": "Zum Einzählen braucht es ein Tempo: erst eines tippen (C)",
+  "With Count-in on (C), playing starts with clicks at the song's tempo, and the song comes in on the beat.": "Mit Einzählen (C) beginnt die Wiedergabe mit Klicks im Tempo des Songs, und der Song setzt auf dem Schlag ein.",
+  "%n beats": {
+    "one": "%n Schlag",
+    "other": "%n Schläge"
+  },
+  "Tap along to set the tempo": "Im Takt mittippen, um das Tempo festzulegen",
+  "Back to the tempo found in the drums": "Zurück zum Tempo des Schlagzeugs",
+  "Count in before playing, or not": "Vor dem Abspielen einzählen oder nicht"
 }

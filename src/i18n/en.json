@@ -1,1 +1,10 @@
-{}
+{
+  "%n beats": {
+    "one": "%n beat",
+    "other": "%n beats"
+  },
+  "Click %n beats before the song plays (C)": {
+    "one": "Click %n beat before the song plays (C)",
+    "other": "Click %n beats before the song plays (C)"
+  }
+}

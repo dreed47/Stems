@@ -83,6 +83,16 @@ Backend::Backend(FilePicker *picker, Separator *separator, Downloader *downloade
     });
     connect(&m_mixer, &Mixer::audioFailed, this, &Backend::setError);
 
+    // Counting in is a habit, not a property of a song, so it's remembered
+    // for every song.
+    m_mixer.setCountIn(QSettings().value("countIn", false).toBool());
+    m_mixer.setCountInBeats(QSettings().value("countInBeats", 4).toInt());
+    connect(&m_mixer, &Mixer::countInChanged, this, [this] {
+        QSettings settings;
+        settings.setValue("countIn", m_mixer.countIn());
+        settings.setValue("countInBeats", m_mixer.countInBeats());
+    });
+
     m_installer.setProcessChannelMode(QProcess::MergedChannels);
     connect(&m_installer, &QProcess::readyRead, this, [this] {
         m_installLog += QString::fromUtf8(m_installer.readAll());
